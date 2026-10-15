@@ -1,5 +1,6 @@
 import threading
 import sqlite3
+import time
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
@@ -10,7 +11,7 @@ app_web = Flask(__name__)
 
 @app_web.route("/")
 def home():
-    return "Bot with Payment Approval System is running!"
+    return "Subscription Bot with Auto-Kick is running!"
 
 def run_web():
     app_web.run(host="0.0.0.0", port=10000)
@@ -18,9 +19,13 @@ def run_web():
 threading.Thread(target=run_web, daemon=True).start()
 
 # --- ការកំណត់សំខាន់ៗ (សូមកែប្រែត្រង់នេះ) ---
-ADMIN_ID = 8980369344             # <--- ដាក់ Telegram User ID របស់អ្នកនៅទីនេះ
-GROUP_INVITE_LINK = "https://t.me/+1oRgTCiY4RM1MjNl"  # <--- ដាក់ Link គ្រុប Telegram របស់អ្នកនៅទីនេះ
+ADMIN_ID = 123456789                      # <--- ដាក់ Telegram User ID របស់អ្នក
+GROUP_INVITE_LINK = "https://t.me/+YourGroupInviteLink"  # <--- Link គ្រុប Telegram របស់អ្នក
+GROUP_CHAT_ID = -1001234567890            # <--- លេខ ID គ្រុប Telegram (ចាប់ផ្តើមដោយ -100)
 # ---------------------------------------------
+
+# រក្សាទុកកញ្ចប់ដែល User បានជ្រើសរើសបណ្តោះអាសន្ន
+user_selected_package = {}
 
 # 2. បង្កើត Database សម្រាប់គ្រប់គ្រងសមាជិកភាព
 def init_db():
@@ -30,7 +35,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
             username TEXT,
-            expiry_date TEXT
+            expiry_date TEXT,
+            kicked INTEGER DEFAULT 0
         )
     ''')
     conn.commit()
@@ -38,33 +44,60 @@ def init_db():
 
 init_db()
 
-# 3. ពាក្យបញ្ជា /start (បង្ហាញ QR Code)
+# 3. ពាក្យបញ្ជា /start (បង្ហាញជម្រើសកញ្ចប់សមាជិកភាព)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    caption = (
-        f"សួស្តី {user.first_name}!\n\n"
-        f"💳 ដើម្បីចូលជាសមាជិក និងទទួលបាន Link ចូលគ្រុប៖\n"
-        f"១. សូម Scan QR Code ខាងលើដើម្បីទូទាត់ប្រាក់។\n"
-        f"២. បន្ទាប់ពីបង់ប្រាក់រួច សូម **ថតរូបវិក្កយបត្រ (Screenshot)** ហើយផ្ញើរូបភាពនោះចូលមកកាន់ Bot នេះផ្ទាល់។\n\n"
-        f"Admin នឹងពិនិត្យ និងផ្ញើ Link ជូនភ្លាមៗបន្ទាប់ពីទទួលបានការយល់ព្រម!"
-    )
+    keyboard = [
+        [InlineKeyboardButton("៥ ថ្ងៃ - ២ ដុល្លារ", callback_data="pkg_5")],
+        [InlineKeyboardButton("១០ ថ្ងៃ - ៣ ដុល្លារ", callback_data="pkg_10")],
+        [InlineKeyboardButton("២០ ថ្ងៃ - ៥ ដុល្លារ", callback_data="pkg_20")],
+        [InlineKeyboardButton("៣០ ថ្ងៃ - ៦ ដុល្លារ", callback_data="pkg_30")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     
-    try:
-        await update.message.reply_photo(photo=open('qr.jpg', 'rb'), caption=caption)
-    except Exception:
-        await update.message.reply_text(
-            f"{caption}\n\n(⚠️ រកមិនឃើញឯកសារ qr.jpg ក្នុង GitHub ទេ សូម Admin ដាក់បញ្ចូលជាមុនសិន)"
-        )
+    welcome_text = (
+        f"សួស្តី {user.first_name}!\n\n"
+        f"សូមជ្រើសរើសកញ្ចប់សមាជិកភាពដែលលោកអ្នកចង់ទិញខាងក្រោម៖"
+    )
+    await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
-# 4. ទទួលរូបភាពវិក្កយបត្រពីអតិថិជន និងបញ្ជូនទៅ Admin
+# 4. ដោះស្រាយពេលអតិថិជនចុចជ្រើសរើសកញ្ចប់ (បង្ហាញ QR Code)
+async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    if data.startswith("pkg_"):
+        days = int(data.split("_")[1])
+        user_id = query.from_user.id
+        user_selected_package[user_id] = days
+        
+        prices = {5: "២ ដុល្លារ", 10: "៣ ដុល្លារ", 20: "៥ ដុល្លារ", 30: "៦ ដុល្លារ"}
+        price_text = prices.get(days, "")
+        
+        caption = (
+            f"📦 អ្នកបានជ្រើសរើសកញ្ចប់៖ **{days} ថ្ងៃ** (តម្លៃ: **{price_text}**)\n\n"
+            f"💳 ១. សូម Scan QR Code ខាងលើដើម្បីទូទាត់ប្រាក់។\n"
+            f"📸 ២. បន្ទាប់ពីបង់ប្រាក់រួច សូមថតរូបវិក្កយបត្រ (Screenshot) ហើយផ្ញើរូបភាពនោះចូលមកកាន់ Bot នេះផ្ទាល់។\n\n"
+            f"Admin នឹងពិនិត្យ និងផ្ញើ Link ជូនភ្លាមៗ!"
+        )
+        
+        try:
+            await query.message.reply_photo(photo=open('qr.jpg', 'rb'), caption=caption, parse_mode="Markdown")
+        except Exception:
+            await query.message.reply_text(f"{caption}\n\n(⚠️ រកមិនឃើញឯកសារ qr.jpg ក្នុង GitHub ទេ)")
+
+# 5. ទទួលរូបភាពវិក្កយបត្រពីអតិថិជន និងបញ្ជូនទៅ Admin
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
     username = user.username or user.first_name
     
+    days = user_selected_package.get(user_id, 30)
+    
     keyboard = [
         [
-            InlineKeyboardButton("✅ យល់ព្រម (Approve)", callback_data=f"approve_{user_id}"),
+            InlineKeyboardButton("✅ យល់ព្រម (Approve)", callback_data=f"approve_{user_id}_{days}"),
             InlineKeyboardButton("❌ បដិសេធ (Reject)", callback_data=f"reject_{user_id}")
         ]
     ]
@@ -73,8 +106,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_caption = (
         f"🔔 **មានអតិថិជនស្នើសុំចូលសមាជិក!**\n\n"
         f"👤 ឈ្មោះ: {username}\n"
-        f"🆔 User ID: `{user_id}`\n\n"
-        f"សូមពិនិត្យវិក្កយបត្រខាងក្រោម រួចចុចប៊ូតុងសម្រេចចិត្ត៖"
+        f"🆔 User ID: `{user_id}`\n"
+        f"ជម្រើសកញ្ចប់: **{days} ថ្ងៃ**\n\n"
+        f"សូមពិនិត្យវិក្កយបត្រខាងក្រោម រួចចុចសម្រេចចិត្ត៖"
     )
     
     try:
@@ -86,25 +120,27 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup,
             parse_mode="Markdown"
         )
-        await update.message.reply_text("📥 វិក្កយបត្ររបស់អ្នកត្រូវបានផ្ញើជូន Admin ហើយ! សូមរង់ចាំការពិនិត្យបន្តិច។")
+        await update.message.reply_text("📥 វិក្កយបត្ររបស់អ្នកត្រូវបានផ្ញើជូន Admin ហើយ! សូមរង់ចាំបន្តិច។")
     except Exception as e:
         await update.message.reply_text("មានបញ្ហាក្នុងការផ្ញើរូបភាព សូមព្យាយាមម្តងទៀត។")
 
-# 5. ប្រព័ន្ធដោះស្រាយការចុចប៊ូតុងរបស់ Admin (Callback Query)
+# 6. ប្រព័ន្ធ Admin ចុច Approve ឬ Reject
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     data = query.data
     if data.startswith("approve_"):
-        user_id = int(data.split("_")[1])
+        parts = data.split("_")
+        user_id = int(parts[1])
+        days = int(parts[2])
         
-        # កំណត់ពេលសមាជិកភាព ៣០ថ្ងៃ ចូល Database
-        expiry = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
+        expiry = (datetime.now() + timedelta(days=days)).strftime('%Y-%m-%d %H:%M:%S')
+        
         conn = sqlite3.connect('subscriptions.db')
         cursor = conn.cursor()
-        cursor.execute('INSERT OR REPLACE INTO users (user_id, username, expiry_date) VALUES (?, ?, ?)', 
-                       (user_id, "Customer", expiry))
+        cursor.execute('INSERT OR REPLACE INTO users (user_id, username, expiry_date, kicked) VALUES (?, ?, ?, ?)', 
+                       (user_id, "Customer", expiry, 0))
         conn.commit()
         conn.close()
         
@@ -112,23 +148,23 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             success_message = (
                 f"🎉 អបអរសាទរ! ការទូទាត់របស់អ្នកត្រូវបាន Admin យល់ព្រមហើយ។\n\n"
                 f"🔗 តំណភ្ជាប់ចូលគ្រុប (Group Link):\n{GROUP_INVITE_LINK}\n\n"
-                f"📅 សមាជិកភាពមានសុពលភាពដល់៖ {expiry}\n"
-                f"អ្នកអាចពិនិត្យមើលថ្ងៃខែនៅសល់ដោយប្រើពាក្យបញ្ជា /status"
+                f"📅 សមាជិកភាពមានសុពលភាពចំនួន {days} ថ្ងៃ ដល់ថ្ងៃ៖ {expiry}\n"
+                f"ពិនិត្យថ្ងៃខែនៅសល់ដោយប្រើពាក្យបញ្ជា /status"
             )
             await context.bot.send_message(chat_id=user_id, text=success_message)
-            await query.edit_message_caption(caption=f"{query.message.caption}\n\n✅ [បានអនុម័តជោគជ័យ និងផ្ញើ Link ជូនអតិថិជនរួចរាល់]")
+            await query.edit_message_caption(caption=f"{query.message.caption}\n\n✅ [បានអនុម័តជោគជ័យ {days} ថ្ងៃ និងផ្ញើ Link ជូនរួចរាល់]")
         except Exception as e:
-            await query.edit_message_caption(caption=f"{query.message.caption}\n\n⚠️ អនុម័តរួច ប៉ុន្តែមានបញ្ហាក្នុងការផ្ញើសារទៅកាន់ User")
+            await query.edit_message_caption(caption=f"{query.message.caption}\n\n⚠️ អនុម័តរួច ប៉ុន្តែមានបញ្ហាក្នុងការផ្ញើសារទៅ User")
             
     elif data.startswith("reject_"):
         user_id = int(data.split("_")[1])
         try:
-            await context.bot.send_message(chat_id=user_id, text="❌ សូមអភ័យទោស វិក្កយបត្រទូទាត់ប្រាក់របស់អ្នកមិនត្រឹមត្រូវ ឬមិនទាន់ទទួលបានប្រាក់ សូមទាក់ទងមក Admin ផ្ទាល់។")
+            await context.bot.send_message(chat_id=user_id, text="❌ សូមអភ័យទោស វិក្កយបត្ររបស់អ្នកមិនត្រឹមត្រូវ សូមទាក់ទងមក Admin ។")
             await query.edit_message_caption(caption=f"{query.message.caption}\n\n❌ [បានបដិសេធ]")
         except Exception:
             await query.edit_message_caption(caption=f"{query.message.caption}\n\n❌ [បានបដិសេធ]")
 
-# 6. ពាក្យបញ្ជា /status
+# 7. ពាក្យបញ្ជា /status ពិនិត្យថ្ងៃខែសល់
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     conn = sqlite3.connect('subscriptions.db')
@@ -146,9 +182,42 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             hours = remaining.seconds // 3600
             await update.message.reply_text(f"ស្ថានភាពសមាជិកភាព៖ ដំណើរការធម្មតា ✅\nសល់ពេល៖ {days} ថ្ងៃ និង {hours} ម៉ោងទៀត\nផុតកំណត់នៅ៖ {expiry_str}")
         else:
-            await update.message.reply_text(f"សមាជិកភាពរបស់អ្នកបានផុតកំណត់ហើយ ❌\nកាលបរិច្ឆេទផុតកំណត់៖ {expiry_str}\nសូមផ្ញើវិក្កយបត្រថ្មីដើម្បីបន្ត។")
+            await update.message.reply_text(f"សមាជិកភាពរបស់អ្នកបានផុតកំណត់ហើយ ❌\nសូមចុច /start ដើម្បីទិញកញ្ចប់បន្តសមាជិកភាព។")
     else:
-        await update.message.reply_text("អ្នកមិនទាន់ជាសមាជិកទេ។ សូមផ្ញើពាក្យ /start ដើម្បីមើល QR Code ទូទាត់ប្រាក់។")
+        await update.message.reply_text("អ្នកមិនទាន់ជាសមាជិកទេ។ សូមផ្ញើពាក្យ /start ដើម្បីជ្រើសរើសកញ្ចប់សមាជិកភាព។")
+
+# 8. ប្រព័ន្ធស្វ័យប្រវត្តិពិនិត្យ និងទាត់ចេញ (Auto-Kick Worker)
+def auto_kick_checker(application):
+    while True:
+        try:
+            conn = sqlite3.connect('subscriptions.db')
+            cursor = conn.cursor()
+            now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            cursor.execute('SELECT user_id FROM users WHERE expiry_date < ? AND kicked = 0', (now_str,))
+            expired_users = cursor.fetchall()
+            
+            for row in expired_users:
+                user_id = row[0]
+                try:
+                    application.bot.ban_chat_member(chat_id=GROUP_CHAT_ID, user_id=user_id)
+                    application.bot.unban_chat_member(chat_id=GROUP_CHAT_ID, user_id=user_id)
+                    
+                    application.bot.send_message(
+                        chat_id=user_id, 
+                        text="⏰ សមាជិកភាពរបស់អ្នកបានផុតកំណត់ហើយ! Bot បានទាត់អ្នកចេញពីគ្រុបដោយស្វ័យប្រវត្តិ។\n\n👉 សូមចុច /start ដើម្បីបង់ប្រាក់ទិញកញ្ចប់សមាជិកភាពថ្មី និងចូលគ្រុបវិញ។"
+                    )
+                except Exception as e:
+                    print(f"Error kicking user {user_id}: {e}")
+                
+                cursor.execute('UPDATE users SET kicked = 1 WHERE user_id = ?', (user_id,))
+                conn.commit()
+                
+            conn.close()
+        except Exception as e:
+            print(f"Database error in auto_kick: {e}")
+            
+        time.sleep(60)
 
 if __name__ == "__main__":
     application = ApplicationBuilder().token("8907453817:AAGqGpbWJzbWXFt1Vqcgso9ytQmwFiih0zc").build()
@@ -156,7 +225,10 @@ if __name__ == "__main__":
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("status", status))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    application.add_handler(CallbackQueryHandler(button_callback))
+    application.add_handler(CallbackQueryHandler(button_callback, pattern="^(approve_|reject_)"))
+    application.add_handler(CallbackQueryHandler(package_callback, pattern="^pkg_"))
     
-    print("Bot with Payment & Approval System is starting...")
+    threading.Thread(target=auto_kick_checker, args=(application,), daemon=True).start()
+    
+    print("Subscription Bot with Auto-Kick is starting...")
     application.run_polling()
