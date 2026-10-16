@@ -12,7 +12,7 @@ app_web = Flask(__name__)
 
 @app_web.route("/")
 def home():
-    return "Subscription Bot with Auto-Kick is running!"
+    return "Subscription Bot with Free Trial & Auto-Kick is running!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -20,16 +20,16 @@ def run_web():
 
 threading.Thread(target=run_web, daemon=True).start()
 
---- ការកំណត់សំខាន់ៗ (សូមកែប្រែត្រង់នេះ) ---
+# --- ការកំណត់សំខាន់ៗ (សូមកែប្រែត្រង់នេះ) ---
 ADMIN_ID = 123456789                      # <--- ដាក់ Telegram User ID របស់អ្នក
-GROUP_INVITE_LINK = "https://t.me/+YourChannelInviteLink"  # <--- Link ឆានែល Telegram របស់អ្នក (សម្រាប់កញ្ចប់ទូទាត់ប្រាក់)
-GROUP_CHAT_ID = -1001234567890            # <--- លេខ ID ឆានែល Telegram របស់អ្នក (ចាប់ផ្តើមដោយ -100)
----------------------------------------------
+GROUP_INVITE_LINK = "https://t.me/+YourGroupInviteLink"  # <--- Link គ្រុប Telegram របស់អ្នក
+GROUP_CHAT_ID = -1001234567890            # <--- លេខ ID គ្រុប Telegram (ចាប់ផ្តើមដោយ -100)
+# ---------------------------------------------
 
 # រក្សាទុកកញ្ចប់ដែល User បានជ្រើសរើសបណ្តោះអាសន្ន
 user_selected_package = {}
 
-# 2. បង្កើត Database សម្រាប់គ្រប់គ្រងសមាជិកភាព
+# 2. បង្កើត Database សម្រាប់គ្រប់គ្រងសមាជិកភាព (បន្ថែម free_claimed, warned និងតារាង used_receipts សម្រាប់ Anti-Cheat)
 def init_db():
     conn = sqlite3.connect('subscriptions.db')
     cursor = conn.cursor()
@@ -39,7 +39,16 @@ def init_db():
             username TEXT,
             expiry_date TEXT,
             kicked INTEGER DEFAULT 0,
-            free_claimed INTEGER DEFAULT 0
+            free_claimed INTEGER DEFAULT 0,
+            warned INTEGER DEFAULT 0
+        )
+    ''')
+    # តារាងសម្រាប់ទប់ស្កាត់ការប្រើប្រាស់វិក្កយបត្រដដែល (Anti-Cheat មុខងារទី ៥)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS used_receipts (
+            photo_file_id TEXT PRIMARY KEY,
+            user_id INTEGER,
+            used_at TEXT
         )
     ''')
     conn.commit()
@@ -47,21 +56,25 @@ def init_db():
 
 init_db()
 
-# 3. ពាក្យបញ្ជា /start (បង្ហាញជម្រើសកញ្ចប់សមាជិកភាព និង Free Trial)
+# 3. ពាក្យបញ្ជា /start (បង្ហាញប៊ូតុង Free Trial ១ថ្ងៃសម្រាប់អ្នកថ្មី និងកញ្ចប់ទូទាត់)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
     
+    # ពិនិត្យមើលថាតើ User ធ្លាប់បានយក Free Trial រួចហើយឬยัง
     conn = sqlite3.connect('subscriptions.db')
     cursor = conn.cursor()
     cursor.execute('SELECT free_claimed FROM users WHERE user_id = ?', (user_id,))
     result = cursor.fetchone()
     conn.close()
-
+    
     keyboard = []
+    
+    # បើមិនទាន់មានក្នុង Database ឬមិនទាន់បាន Claim Free Trial ទេ បង្ហាញប៊ូតុង Free Trial
     if not result or result[0] == 0:
         keyboard.append([InlineKeyboardButton("🎁 សាកល្បងប្រើប្រាស់ฟรี ១ ថ្ងៃ (Free Trial)", callback_data="claim_free")])
-
+    
+    # បន្ថែមបញ្ជីកញ្ចប់តម្លៃធម្មតា
     keyboard.extend([
         [InlineKeyboardButton("៥ ថ្ងៃ - ២ ដុល្លារ", callback_data="pkg_5")],
         [InlineKeyboardButton("១០ ថ្ងៃ - ៣ ដុល្លារ", callback_data="pkg_10")],
@@ -70,23 +83,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
+    
     welcome_text = (
         f"សួស្តី {user.first_name}!\n\n"
-        f"សូមស្វាគមន៍មកកាន់ប្រព័ន្ធសមាជិកភាពឆានែលរបស់យើង។\n"
-        f"សូមជ្រើសរើសកញ្ចប់ ឬសាកល្បងប្រើប្រាស់ฟรีខាងក្រោម៖"
+        f"សូមស្វាគមន៍មកកាន់ប្រព័ន្ធទិញសមាជិកភាពគ្រុបរបស់យើង។ "
+        f"អ្នកអាចជ្រើសរើសកញ្ចប់សមាជិកភាព ឬសាកល្បងប្រើប្រាស់ฟรีខាងក្រោម៖"
     )
     await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
-# 4. ដោះស្រាយពេលអតិថិជនចុចជ្រើសរើសកញ្ចប់ ឬ Free Trial
+# 4. ដោះស្រាយពេលអតិថិជនចុចយក Free Trial ឬកញ្ចប់បង់ប្រាក់
 async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     data = query.data
     user_id = query.from_user.id
-    user = query.from_user
-    username = user.username or user.first_name
-
+    
+    # បើ User ចុចយក Free Trial ១ ថ្ងៃ
     if data == "claim_free":
         conn = sqlite3.connect('subscriptions.db')
         cursor = conn.cursor()
@@ -95,43 +108,27 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if result and result[0] == 1:
             conn.close()
-            await query.message.reply_text("❌ អ្នកបានប្រើប្រាស់សិទ្ធិសាកល្បងប្រើប្រាស់ฟรี ១ ថ្ងៃរួចរាល់ហើយ!")
+            await query.message.reply_text("❌ អ្នកបានប្រើប្រាស់សិទ្ធិសាកល្បងฟรี ១ ថ្ងៃរួចរាល់ហើយ!")
             return
             
+        # កំណត់ថ្ងៃផុតកំណត់ ១ ថ្ងៃក្រោយ
         expiry = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
         
-        # បង្កើត Unique Channel Invite Link (ប្រើបានតែ ១ ដងគត់ ក្នុងរយៈពេល ១ ថ្ងៃ)
-        try:
-            expire_time = datetime.now() + timedelta(days=1)
-            invite_link_obj = await context.bot.create_chat_invite_link(
-                chat_id=GROUP_CHAT_ID,
-                member_limit=1,
-                expire_date=expire_time
-            )
-            group_link = invite_link_obj.invite_link
-        except Exception as e:
-            group_link = None
-            print(f"Error creating invite link: {e}")
-
-        if group_link:
-            cursor.execute('''
-                INSERT OR REPLACE INTO users (user_id, username, expiry_date, kicked, free_claimed) 
-                VALUES (?, ?, ?, ?, ?)
-            ''', (user_id, username, expiry, 0, 1))
-            conn.commit()
-            conn.close()
-            
-            success_text = (
-                f"🎉 អបអរសាទរ! អ្នកទទួលបានសិទ្ធិសាកល្បងฟรี ១ ថ្ងៃជោគជ័យ។\n\n"
-                f"🔗 តំណភ្ជាប់ចូលឆានែលផ្ទាល់ខ្លួនរបស់អ្នក (ប្រើបានតែ ១ ដង និងផុតកំណត់ក្នុង ១ ថ្ងៃ):\n{group_link}\n\n"
-                f"📅 មានសុពលភាពដល់ថ្ងៃ៖ {expiry}\n"
-                f"ពិនិត្យថ្ងៃខែនៅសល់ដោយប្រើពាក្យបញ្ជា /status"
-            )
-            await query.message.reply_text(success_text)
-        else:
-            conn.close()
-            await query.message.reply_text("⚠️ មិនអាចបង្កើត Link បានទេ! សូមប្រាកដថា Bot ត្រូវបានដាក់ជា Admin ក្នុងឆានែល និងមានសិទ្ធិបង្កើត Link។")
-
+        cursor.execute('''
+            INSERT OR REPLACE INTO users (user_id, username, expiry_date, kicked, free_claimed, warned) 
+            VALUES (?, ?, ?, ?, ?, 0)
+        ''', (user_id, query.from_user.username or query.from_user.first_name, expiry, 0, 1))
+        conn.commit()
+        conn.close()
+        
+        success_message = (
+            f"🎉 អបអរសាទរ! អ្នកទទួលបានសិទ្ធិសាកល្បងฟรี ១ ថ្ងៃជោគជ័យ។\n\n"
+            f"🔗 តំណភ្ជាប់ចូលគ្រុប (Group Link):\n{GROUP_INVITE_LINK}\n\n"
+            f"📅 មានសុពលភាពដល់ថ្ងៃ៖ {expiry}\n"
+            f"ពិនិត្យថ្ងៃខែនៅសល់ដោយប្រើពាក្យបញ្ជា /status"
+        )
+        await query.message.reply_text(success_message)
+        
     elif data.startswith("pkg_"):
         days = int(data.split("_")[1])
         user_selected_package[user_id] = days
@@ -151,32 +148,50 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await query.message.reply_text(f"{caption}\n\n(⚠️ រកមិនឃើញឯកសារ qr.jpg ក្នុង GitHub ទេ)")
 
-# 5. ទទួលរូបភាពវិក្កយបត្រពីអតិថិជន និងបញ្ជូនទៅ Admin
+# 5. ទទួលរូបភាពវិក្កយបត្រពីអតិថិជន និងបញ្ជូនទៅ Admin (រួមបញ្ចូលមុខងារទី ៥: Anti-Cheat)
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
     username = user.username or user.first_name
     
+    photo_file = update.message.photo[-1].file_id
+    
+    # មុខងារទី ៥៖ ពិនិត្យមើលថាតើវិក្កយបត្រនេះធ្លាប់ត្រូវបានប្រើប្រាស់រួចហើយឬยัง (Anti-Cheat)
+    conn = sqlite3.connect('subscriptions.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT user_id FROM used_receipts WHERE photo_file_id = ?', (photo_file,))
+    receipt_check = cursor.fetchone()
+    conn.close()
+    
+    if receipt_check:
+        await update.message.reply_text("❌ វិក្កយបត្រ (Screenshot) នេះត្រូវបានប្រើប្រាស់រួចរាល់ហើយ! សូមកុំយកវិក្កយបត្ររបស់អ្នកដទៃមកផ្ញើซ้ำ។")
+        return
+        
     days = user_selected_package.get(user_id, 30)
-
+    
+    # មុខងារទី ៣៖ បន្ថែមប៊ូតុងកែសម្រួលថ្ងៃបន្ថែម (+5d, +10d) ឱ្យ Admin ងាយស្រួលគ្រប់គ្រងរហ័ស
     keyboard = [
         [
             InlineKeyboardButton("✅ យល់ព្រម (Approve)", callback_data=f"approve_{user_id}_{days}"),
             InlineKeyboardButton("❌ បដិសេធ (Reject)", callback_data=f"reject_{user_id}")
+        ],
+        [
+            InlineKeyboardButton("➕ បន្ថែម ៥ថ្ងៃ", callback_data=f"ext_{user_id}_5"),
+            InlineKeyboardButton("➕ បន្ថែម ១០ថ្ងៃ", callback_data=f"ext_{user_id}_10")
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-
+    
     admin_caption = (
-        f"🔔 **មានអតិថិជនស្នើសុំចូលសមាជិកឆានែល!**\n\n"
+        f"🔔 **មានអតិថិជនស្នើសុំចូលសមាជិក!**\n\n"
         f"👤 ឈ្មោះ: {username}\n"
         f"🆔 User ID: `{user_id}`\n"
-        f"ជម្រើសកញ្ចប់: **{days} ថ្ងៃ**\n\n"
+        f"ជម្រើសកញ្ចប់: **{days} ថ្ងៃ**\n"
+        f"🖼 Photo ID: `{photo_file}`\n\n"
         f"សូមពិនិត្យវិក្កយបត្រខាងក្រោម រួចចុចសម្រេចចិត្ត៖"
     )
-
+    
     try:
-        photo_file = update.message.photo[-1].file_id
         await context.bot.send_photo(
             chat_id=ADMIN_ID,
             photo=photo_file,
@@ -188,7 +203,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text("មានបញ្ហាក្នុងការផ្ញើរូបភាព សូមព្យាយាមម្តងទៀត។")
 
-# 6. ប្រព័ន្ធ Admin ចុច Approve ឬ Reject
+# 6. ប្រព័ន្ធ Admin ចុច Approve, Reject ឬ Extend Days (មុខងារទី ៣ និង ៥)
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -203,15 +218,33 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         conn = sqlite3.connect('subscriptions.db')
         cursor = conn.cursor()
-        cursor.execute('INSERT OR REPLACE INTO users (user_id, username, expiry_date, kicked) VALUES (?, ?, ?, ?)', 
-                       (user_id, "Customer", expiry, 0))
+        
+        # កត់ត្រាវិក្កយបត្រទុកដើម្បីការពារការយកមកប្រើซ้ำ (Anti-Cheat មុខងារទី ៥)
+        if query.message.photo:
+            # ទាញយក file_id ពី caption ឬ message object បើមាន
+            photo_file = query.message.photo[-1].file_id if hasattr(query.message, 'photo') else None
+            if photo_file:
+                cursor.execute('INSERT OR IGNORE INTO used_receipts (photo_file_id, user_id, used_at) VALUES (?, ?, ?)', 
+                               (photo_file, user_id, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+        
+        cursor.execute('''
+            UPDATE users SET expiry_date = ?, kicked = 0, warned = 0 WHERE user_id = ?
+        ''', (expiry, user_id))
+        
+        # ប្រសិនបើ User មិនទាន់មានក្នុង DB ទេ (ករណីកម្រ) ធ្វើការ Insert បន្ថែម
+        if cursor.rowcount == 0:
+            cursor.execute('''
+                INSERT INTO users (user_id, username, expiry_date, kicked, free_claimed, warned) 
+                VALUES (?, ?, ?, ?, ?, 0)
+            ''', (user_id, "Customer", expiry, 0, 1))
+            
         conn.commit()
         conn.close()
         
         try:
             success_message = (
                 f"🎉 អបអរសាទរ! ការទូទាត់របស់អ្នកត្រូវបាន Admin យល់ព្រមហើយ។\n\n"
-                f"🔗 តំណភ្ជាប់ចូលឆានែល (Channel Link):\n{GROUP_INVITE_LINK}\n\n"
+                f"🔗 តំណភ្ជាប់ចូលគ្រុប (Group Link):\n{GROUP_INVITE_LINK}\n\n"
                 f"📅 សមាជិកភាពមានសុពលភាពចំនួន {days} ថ្ងៃ ដល់ថ្ងៃ៖ {expiry}\n"
                 f"ពិនិត្យថ្ងៃខែនៅសល់ដោយប្រើពាក្យបញ្ជា /status"
             )
@@ -227,6 +260,63 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_caption(caption=f"{query.message.caption}\n\n❌ [បានបដិសេធ]")
         except Exception:
             await query.edit_message_caption(caption=f"{query.message.caption}\n\n❌ [បានបដិសេធ]")
+            
+    elif data.startswith("ext_"): # មុខងារទី ៣៖ Admin Panel បន្ថែមថ្ងៃឱ្យអតិថិជនរហ័ស
+        parts = data.split("_")
+        user_id = int(parts[1])
+        ext_days = int(parts[2])
+        
+        conn = sqlite3.connect('subscriptions.db')
+        cursor = conn.cursor()
+        cursor.execute('SELECT expiry_date FROM users WHERE user_id = ?', (user_id,))
+        res = cursor.fetchone()
+        
+        now = datetime.now()
+        if res and res[0]:
+            current_expiry = datetime.strptime(res[0], '%Y-%m-%d %H:%M:%S')
+            base_time = current_expiry if current_expiry > now else now
+        else:
+            base_time = now
+            
+        new_expiry = (base_time + timedelta(days=ext_days)).strftime('%Y-%m-%d %H:%M:%S')
+        
+        cursor.execute('''
+            INSERT OR REPLACE INTO users (user_id, username, expiry_date, kicked, free_claimed, warned) 
+            VALUES (?, ?, ?, 0, 1, 0)
+        ''', (user_id, "Customer", new_expiry))
+        conn.commit()
+        conn.close()
+        
+        try:
+            await context.bot.send_message(chat_id=user_id, text=f"✨ Admin បានបន្ថែមថ្ងៃសមាជិកភាពឱ្យអ្នកចំនួន {ext_days} ថ្ងៃបន្ថែមទៀត! ផុតកំណត់ថ្ងៃ៖ {new_expiry}")
+            await query.edit_message_caption(caption=f"{query.message.caption}\n\n➕ [បានបន្ថែមថ្ងៃជោគជ័យ +{ext_days} ថ្ងៃ]")
+        except Exception:
+            await query.edit_message_caption(caption=f"{query.message.caption}\n\n➕ [បានបន្ថែមថ្ងៃជោគជ័យ +{ext_days} ថ្ងៃ ប៉ុន្តែផ្ញើសារមិនទាន់ដល់ User]")
+
+# 7. មុខងារទី ៤៖ ពាក្យបញ្ជា /stats សម្រាប់ Admin មើលស្ថិតិសមាជិក
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ អ្នកមិនមែនជា Admin ទេ!")
+        return
+        
+    conn = sqlite3.connect('subscriptions.db')
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT COUNT(*) FROM users WHERE expiry_date >= datetime('now') AND kicked = 0")
+    active_users = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT COUNT(*) FROM users WHERE expiry_date < datetime('now')")
+    expired_users = cursor.fetchone()[0]
+    
+    conn.close()
+    
+    stats_text = (
+        f"📊 **ស្ថិតិប្រព័ន្ធសមាជិកភាព (Admin Dashboard)**\n\n"
+        f"🟢 សមាជិកសកម្ម (Active): **{active_users} នាក់**\n"
+        f"🔴 សមាជិកអស់សុពលភាព (Expired): **{expired_users} នាក់**"
+    )
+    await update.message.reply_text(stats_text, parse_mode="Markdown")
 
 # 7. ពាក្យបញ្ជា /status ពិនិត្យថ្ងៃខែសល់
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -250,7 +340,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("អ្នកមិនទាន់ជាសមាជិកទេ។ សូមផ្ញើពាក្យ /start ដើម្បីជ្រើសរើសកញ្ចប់សមាជិកភាព។")
 
-# 8. ប្រព័ន្ធស្វ័យប្រវត្តិពិនិត្យ និងទាត់ចេញ (Auto-Kick Worker) សម្រាប់ឆានែល
+# 8. ប្រព័ន្ធស្វ័យប្រវត្តិពិនិត្យ ផ្ញើសារជូនដំណឹងមុនផុតកំណត់ (មុខងារទី ១) និង Auto-Kick Worker
 def auto_kick_checker(application):
     while True:
         try:
@@ -258,19 +348,36 @@ def auto_kick_checker(application):
             cursor = conn.cursor()
             now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
+            # មុខងារទី ១៖ ផ្ញើសារជូនដំណឹងមុនពេលផុតកំណត់ ២៤ ម៉ោង (Expiry Warning Reminder)
+            soon_str = (datetime.now() + timedelta(hours=24)).strftime('%Y-%m-%d %H:%M:%S')
+            cursor.execute('SELECT user_id FROM users WHERE expiry_date <= ? AND expiry_date > ? AND warned = 0 AND kicked = 0', (soon_str, now_str))
+            warn_users = cursor.fetchall()
+            
+            for row in warn_users:
+                u_id = row[0]
+                try:
+                    application.bot.send_message(
+                        chat_id=u_id,
+                        text="⚠️ **សេចក្តីជូនដំណឹង:** សមាជិកភាពគ្រុបរបស់អ្នកនឹងត្រូវផុតកំណត់ក្នុងរយៈពេល ២៤ ម៉ោងខាងមុខនេះហើយ! សូមបន្តកញ្ចប់សមាជិកភាពរបស់អ្នកជាមុនសិន ដើម្បីកុំឱ្យ Bot ទាត់ចេញពីគ្រុបដោយស្វ័យប្រវត្តិ។ (ចុច /start)"
+                    )
+                    cursor.execute('UPDATE users SET warned = 1 WHERE user_id = ?', (u_id,))
+                    conn.commit()
+                except Exception as e:
+                    print(f"Error sending warning to {u_id}: {e}")
+
+            # Auto-Kick សមាជិកដែលផុតកំណត់
             cursor.execute('SELECT user_id FROM users WHERE expiry_date < ? AND kicked = 0', (now_str,))
             expired_users = cursor.fetchall()
             
             for row in expired_users:
                 user_id = row[0]
                 try:
-                    # សម្រាប់ឆានែល ប្រើ ban_chat_member ដើម្បីដកសមាជិកចេញ
                     application.bot.ban_chat_member(chat_id=GROUP_CHAT_ID, user_id=user_id)
                     application.bot.unban_chat_member(chat_id=GROUP_CHAT_ID, user_id=user_id)
                     
                     application.bot.send_message(
                         chat_id=user_id, 
-                        text="⏰ សមាជិកភាពរបស់អ្នកបានផុតកំណត់ហើយ! Bot បានដកអ្នកចេញពីឆានែលដោយស្វ័យប្រវត្តិ។\n\n👉 សូមចុច /start ដើម្បីបង់ប្រាក់ទិញកញ្ចប់សមាជិកភាពថ្មី និងចូលឆានែលវិញ។"
+                        text="⏰ សមាជិកភាពរបស់អ្នកបានផុតកំណត់ហើយ! Bot បានទាត់អ្នកចេញពីគ្រុបដោយស្វ័យប្រវត្តិ។\n\n👉 សូមចុច /start ដើម្បីបង់ប្រាក់ទិញកញ្ចប់សមាជិកភាពថ្មី និងចូលគ្រុបវិញ។"
                     )
                 except Exception as e:
                     print(f"Error kicking user {user_id}: {e}")
@@ -290,17 +397,18 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 if __name__ == "__main__":
     application = ApplicationBuilder().token("8907453817:AAGqGpbWJzbWXFt1Vqcgso9ytQmwFiih0zc").build()
-
+    
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("status", status))
+    application.add_handler(CommandHandler("stats", stats))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    application.add_handler(CallbackQueryHandler(button_callback, pattern="^(approve_|reject_)"))
-    application.add_handler(CallbackQueryHandler(package_callback, pattern="^(pkg_|claim_free)"))
-
+    application.add_handler(CallbackQueryHandler(button_callback, pattern="^(approve_|reject_|ext_)"))
+    application.add_handler(CallbackQueryHandler(package_callback, pattern="^(pkg_|claim_free$)"))
+    
     # ចុះឈ្មោះ Error Handler
     application.add_error_handler(error_handler)
-
+    
     threading.Thread(target=auto_kick_checker, args=(application,), daemon=True).start()
-
-    print("Subscription Bot with Auto-Kick for Channel is starting...")
+    
+    print("Subscription Bot with Free Trial, Warning, Anti-Cheat & Auto-Kick is starting...")
     application.run_polling()
