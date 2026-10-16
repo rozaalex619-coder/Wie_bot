@@ -164,7 +164,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
     
     if receipt_check:
-        await update.message.reply_text("❌ វិក្កយបត្រ (Screenshot) នេះត្រូវបានប្រើប្រាស់រួចរាល់ហើយ! សូមកុំយកវិក្កយបត្ររបស់អ្នកដទៃមកផ្ញើซ้ำ។")
+        await update.message.reply_text("❌ វិក្កយបត្រ (Screenshot) នេះត្រូវបានប្រើប្រាស់រួចរាល់ហើយ! សូមកុំយកវិក្កយបត្ររបស់អ្នកដទៃមកផ្ញើម្តងទៀត។")
         return
         
     days = user_selected_package.get(user_id, 30)
@@ -316,6 +316,54 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(stats_text, parse_mode="Markdown")
 
+# 🆕 មុខងារថ្មីសម្រាប់ Admin៖ មើលបញ្ជីសមាជិកទាំងអស់ ឈ្មោះ និងចំនួនថ្ងៃដែលនៅសល់
+async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ អ្នកមិនមែនជា Admin ទេ!")
+        return
+        
+    conn = sqlite3.connect('subscriptions.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT user_id, username, expiry_date, kicked FROM users')
+    rows = cursor.fetchall()
+    conn.close()
+    
+    if not rows:
+        await update.message.reply_text("📭 មិនទាន់មានទិន្នន័យសមាជិកនៅក្នុងប្រព័ន្ធទេ។")
+        return
+        
+    msg = "📋 **បញ្ជីឈ្មោះ និងស្ថានភាពសមាជិកទាំងអស់៖**\n\n"
+    now = datetime.now()
+    
+    for row in rows:
+        u_id, uname, exp_str, kicked = row
+        name = uname if uname else "No Name"
+        
+        if kicked == 1:
+            status_text = "🔴 បានទាត់ចេញ (Expired/Kicked)"
+        else:
+            try:
+                exp_date = datetime.strptime(exp_str, '%Y-%m-%d %H:%M:%S')
+                if now < exp_date:
+                    rem = exp_date - now
+                    days = rem.days
+                    hours = rem.seconds // 3600
+                    status_text = f"🟢 សកម្ម (សល់ {days} ថ្ងៃ និង {hours} ម៉ោង)"
+                else:
+                    status_text = "🔴 ផុតកំណត់ហើយ"
+            except Exception:
+                status_text = f"📅 ផុតកំណត់ថ្ងៃ៖ {exp_str}"
+                
+        msg += f"👤 ឈ្មោះ: **{name}** (ID: `{u_id}`)\nស្ថានភាព: {status_text}\n----------------------------------\n"
+        
+    # បើអត្ថបទវែងពេក Telegram អាចនឹង Error ដូច្នេះផ្ញើជាកំណាត់ៗបើសჭប
+    if len(msg) > 4000:
+        for x in range(0, len(msg), 4000):
+            await update.message.reply_text(msg[x:x+4000], parse_mode="Markdown")
+    else:
+        await update.message.reply_text(msg, parse_mode="Markdown")
+
 # 7. ពាក្យបញ្ជា /status ពិនិត្យថ្ងៃខែសល់
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -399,6 +447,7 @@ if __name__ == "__main__":
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("status", status))
     application.add_handler(CommandHandler("stats", stats))
+    application.add_handler(CommandHandler("admin_members", admin_members))  # <--- បន្ថែម Handler សម្រាប់ Admin មើលសមាជិក
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(CallbackQueryHandler(button_callback, pattern="^(approve_|reject_|ext_)"))
     application.add_handler(CallbackQueryHandler(package_callback, pattern="^(pkg_|claim_free$)"))
