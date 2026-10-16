@@ -61,8 +61,21 @@ init_db()
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
+    username = user.username or user.first_name
     
-    # ពិនិត្យមើលថាតើ User ធ្លាប់បានយក Free Trial រួចហើយឬยัง
+    conn = sqlite3.connect('subscriptions.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT free_claimed, expiry_date FROM users WHERE user_id = ?', (user_id,))
+    result = cursor.fetchone()
+    
+    if not result:
+        cursor.execute('''
+            INSERT INTO users (user_id, username, expiry_date, kicked, free_claimed, warned, package_info)
+            VALUES (?, ?, ?, 0, 0, 0, 'មិនទាន់ជ្រើសរើសកញ្ចប់')
+        ''', (user_id, username, (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')))
+        conn.commit()
+    conn.close()
+    
     conn = sqlite3.connect('subscriptions.db')
     cursor = conn.cursor()
     cursor.execute('SELECT free_claimed FROM users WHERE user_id = ?', (user_id,))
@@ -71,7 +84,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = []
     
-    # បើមិនទាន់មានក្នុង Database ឬមិនទាន់បាន Claim Free Trial ទេ បង្ហាញប៊ូតុង Free Trial
+    # បង្ហាញប៊ូតុង Free Trial សម្រាប់តែអ្នកដែលមិនទាន់ធ្លាប់យកសោះ (free_claimed == 0)
     if not result or result[0] == 0:
         keyboard.append([InlineKeyboardButton("🎁 សាកល្បងប្រើប្រាស់បានចំនួន១ ថ្ងៃ (Free Trial)", callback_data="claim_free")])
     
@@ -109,7 +122,7 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if result and result[0] == 1:
             conn.close()
-            await query.message.reply_text("❌ អ្នកបានប្រើប្រាស់សិទ្ធិសាកល្បងអស់ចំនួន ១ ថ្ងៃរួចរាល់ហើយ!")
+            await query.message.reply_text("❌ អ្នកបានប្រើប្រាស់សិទ្ធិសាកល្បងអស់ចំនួន ១ ថ្ងៃរួចរាល់ហើយ! (មិនអាចយកម្តងទៀតបានទេ)")
             return
             
         # កំណត់ថ្ងៃផុតកំណត់ ១ ថ្ងៃក្រោយ
@@ -118,9 +131,8 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         package_desc = "១ ថ្ងៃ - 0 ដុល្លារ (Free Trial)"
         
         cursor.execute('''
-            INSERT OR REPLACE INTO users (user_id, username, expiry_date, kicked, free_claimed, warned, package_info) 
-            VALUES (?, ?, ?, ?, ?, 0, ?)
-        ''', (user_id, username, expiry, 0, 1, package_desc))
+            UPDATE users SET username = ?, expiry_date = ?, kicked = 0, free_claimed = 1, warned = 0, package_info = ? WHERE user_id = ?
+        ''', (username, expiry, package_desc, user_id))
         conn.commit()
         conn.close()
         
@@ -291,9 +303,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         new_pkg = f"{old_pkg} + បន្ថែម {ext_days}ថ្ងៃ"
         
         cursor.execute('''
-            INSERT OR REPLACE INTO users (user_id, username, expiry_date, kicked, free_claimed, warned, package_info) 
-            VALUES (?, ?, ?, 0, 1, 0, ?)
-        ''', (user_id, "Customer", new_expiry, new_pkg))
+            UPDATE users SET expiry_date = ?, kicked = 0, package_info = ? WHERE user_id = ?
+        ''', (new_expiry, new_pkg, user_id))
         conn.commit()
         conn.close()
         
@@ -349,7 +360,7 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📭 មិនទាន់មានទិន្នន័យសមាជិកនៅក្នុងប្រព័ន្ធទេ។")
         return
         
-    msg = "📋 **បញ្ជីឈ្មោះ វិន័យកញ្ចប់ និងស្ថានភាពសមាជិកទាំងអស់៖**\n\n"
+    msg = "📋 **បញ្ជីឈ្មោះ កញ្ចប់ និងស្ថានភាពសមាជិកទាំងអស់៖**\n\n"
     now = datetime.now()
     
     for row in rows:
