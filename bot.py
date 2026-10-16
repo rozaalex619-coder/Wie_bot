@@ -52,7 +52,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
     
-    # ពិនិត្យមើលថាតើ User ធ្លាប់បានយក Free Trial រួចហើយឬยัง
+    # ពិនិត្យមើលថាតើ User ធ្លាប់បានយក Free Trial រួចហើយឬនៅ
     conn = sqlite3.connect('subscriptions.db')
     cursor = conn.cursor()
     cursor.execute('SELECT free_claimed FROM users WHERE user_id = ?', (user_id,))
@@ -78,7 +78,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
         f"សួស្តី {user.first_name}!\n\n"
         f"សូមស្វាគមន៍មកកាន់ប្រព័ន្ធទិញសមាជិកភាពគ្រុបរបស់យើង។ "
-        f"អ្នកអាចជ្រើសរើសកញ្ចប់សមាជិកភាព ឬសាកល្បងប្រើប្រាស់ฟรีខាងក្រោម៖"
+        f"អ្នកអាចជ្រើសរើសកញ្ចប់សមាជិកភាព ឬសាកល្បងប្រើប្រាស់ខាងក្រោម៖"
     )
     await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
