@@ -22,7 +22,7 @@ threading.Thread(target=run_web, daemon=True).start()
 
 # --- ការកំណត់សំខាន់ៗ (សូមកែប្រែត្រង់នេះ) ---
 ADMIN_ID = 123456789                      # <--- ដាក់ Telegram User ID របស់អ្នក
-GROUP_INVITE_LINK = "https://t.me/+YourGroupInviteLink"  # <--- Link គ្រុប Telegram របស់អ្នក
+GROUP_INVITE_LINK = "https://t.me/+2JquQ2gZnQE4OGU1"  # <--- Link គ្រុប Telegram របស់អ្នក
 GROUP_CHAT_ID = -1001234567890            # <--- លេខ ID គ្រុប Telegram (ចាប់ផ្តើមដោយ -100)
 # ---------------------------------------------
 
