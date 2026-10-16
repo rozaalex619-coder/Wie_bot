@@ -12,7 +12,7 @@ app_web = Flask(__name__)
 
 @app_web.route("/")
 def home():
-    return "Subscription Bot with Auto-Kick is running!"
+    return "Subscription Bot with Free Trial & Auto-Kick is running!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -29,7 +29,7 @@ GROUP_CHAT_ID = -1001234567890            # <--- លេខ ID គ្រុប Te
 # រក្សាទុកកញ្ចប់ដែល User បានជ្រើសរើសបណ្តោះអាសន្ន
 user_selected_package = {}
 
-# 2. បង្កើត Database សម្រាប់គ្រប់គ្រងសមាជិកភាព
+# 2. បង្កើត Database សម្រាប់គ្រប់គ្រងសមាជិកភាព (បន្ថែម free_claimed)
 def init_db():
     conn = sqlite3.connect('subscriptions.db')
     cursor = conn.cursor()
@@ -38,7 +38,8 @@ def init_db():
             user_id INTEGER PRIMARY KEY,
             username TEXT,
             expiry_date TEXT,
-            kicked INTEGER DEFAULT 0
+            kicked INTEGER DEFAULT 0,
+            free_claimed INTEGER DEFAULT 0
         )
     ''')
     conn.commit()
@@ -46,32 +47,81 @@ def init_db():
 
 init_db()
 
-# 3. ពាក្យបញ្ជា /start (បង្ហាញជម្រើសកញ្ចប់សមាជិកភាព)
+# 3. ពាក្យបញ្ជា /start (បង្ហាញប៊ូតុង Free Trial ១ថ្ងៃសម្រាប់អ្នកថ្មី និងកញ្ចប់ទូទាត់)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    keyboard = [
+    user_id = user.id
+    
+    # ពិនិត្យមើលថាតើ User ធ្លាប់បានយក Free Trial រួចហើយឬยัง
+    conn = sqlite3.connect('subscriptions.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT free_claimed FROM users WHERE user_id = ?', (user_id,))
+    result = cursor.fetchone()
+    conn.close()
+    
+    keyboard = []
+    
+    # បើមិនទាន់មានក្នុង Database ឬមិនទាន់បាន Claim Free Trial ទេ បង្ហាញប៊ូតុង Free Trial
+    if not result or result[0] == 0:
+        keyboard.append([InlineKeyboardButton("🎁 សាកល្បងប្រើប្រាស់ฟรี ១ ថ្ងៃ (Free Trial)", callback_data="claim_free")])
+    
+    # បន្ថែមបញ្ជីកញ្ចប់តម្លៃធម្មតា
+    keyboard.extend([
         [InlineKeyboardButton("៥ ថ្ងៃ - ២ ដុល្លារ", callback_data="pkg_5")],
         [InlineKeyboardButton("១០ ថ្ងៃ - ៣ ដុល្លារ", callback_data="pkg_10")],
         [InlineKeyboardButton("២០ ថ្ងៃ - ៥ ដុល្លារ", callback_data="pkg_20")],
         [InlineKeyboardButton("៣០ ថ្ងៃ - ៦ ដុល្លារ", callback_data="pkg_30")]
-    ]
+    ])
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     welcome_text = (
         f"សួស្តី {user.first_name}!\n\n"
-        f"សូមជ្រើសរើសកញ្ចប់សមាជិកភាពដែលលោកអ្នកចង់ទិញខាងក្រោម៖"
+        f"សូមស្វាគមន៍មកកាន់ប្រព័ន្ធទិញសមាជិកភាពគ្រុបរបស់យើង។ "
+        f"អ្នកអាចជ្រើសរើសកញ្ចប់សមាជិកភាព ឬសាកល្បងប្រើប្រាស់ฟรีខាងក្រោម៖"
     )
     await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
-# 4. ដោះស្រាយពេលអតិថិជនចុចជ្រើសរើសកញ្ចប់ (បង្ហាញ QR Code)
+# 4. ដោះស្រាយពេលអតិថិជនចុចយក Free Trial ឬកញ្ចប់បង់ប្រាក់
 async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     data = query.data
-    if data.startswith("pkg_"):
+    user_id = query.from_user.id
+    
+    # បើ User ចុចយក Free Trial ១ ថ្ងៃ
+    if data == "claim_free":
+        conn = sqlite3.connect('subscriptions.db')
+        cursor = conn.cursor()
+        cursor.execute('SELECT free_claimed FROM users WHERE user_id = ?', (user_id,))
+        result = cursor.fetchone()
+        
+        if result and result[0] == 1:
+            conn.close()
+            await query.message.reply_text("❌ អ្នកបានប្រើប្រាស់សិទ្ធិសាកល្បងฟรี ១ ថ្ងៃរួចរាល់ហើយ!")
+            return
+            
+        # កំណត់ថ្ងៃផុតកំណត់ ១ ថ្ងៃក្រោយ
+        expiry = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
+        
+        cursor.execute('''
+            INSERT OR REPLACE INTO users (user_id, username, expiry_date, kicked, free_claimed) 
+            VALUES (?, ?, ?, ?, ?)
+        ''', (user_id, query.from_user.username or query.from_user.first_name, expiry, 0, 1))
+        conn.commit()
+        conn.close()
+        
+        success_message = (
+            f"🎉 អបអរសាទរ! អ្នកទទួលបានសិទ្ធិសាកល្បងฟรี ១ ថ្ងៃជោគជ័យ។\n\n"
+            f"🔗 តំណភ្ជាប់ចូលគ្រុប (Group Link):\n{GROUP_INVITE_LINK}\n\n"
+            f"📅 មានសុពលភាពដល់ថ្ងៃ៖ {expiry}\n"
+            f"ពិនិត្យថ្ងៃខែនៅសល់ដោយប្រើពាក្យបញ្ជា /status"
+        )
+        await query.message.reply_text(success_message)
+        
+    elif data.startswith("pkg_"):
         days = int(data.split("_")[1])
-        user_id = query.from_user.id
         user_selected_package[user_id] = days
         
         prices = {5: "២ ដុល្លារ", 10: "៣ ដុល្លារ", 20: "៥ ដុល្លារ", 30: "៦ ដុល្លារ"}
@@ -141,8 +191,17 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         conn = sqlite3.connect('subscriptions.db')
         cursor = conn.cursor()
-        cursor.execute('INSERT OR REPLACE INTO users (user_id, username, expiry_date, kicked) VALUES (?, ?, ?, ?)', 
-                       (user_id, "Customer", expiry, 0))
+        cursor.execute('''
+            UPDATE users SET expiry_date = ?, kicked = 0 WHERE user_id = ?
+        ''', (expiry, user_id))
+        
+        # ប្រសិនបើ User មិនទាន់មានក្នុង DB ទេ (ករណីកម្រ) ធ្វើការ Insert បន្ថែម
+        if cursor.rowcount == 0:
+            cursor.execute('''
+                INSERT INTO users (user_id, username, expiry_date, kicked, free_claimed) 
+                VALUES (?, ?, ?, ?, ?)
+            ''', (user_id, "Customer", expiry, 0, 1))
+            
         conn.commit()
         conn.close()
         
@@ -232,12 +291,12 @@ if __name__ == "__main__":
     application.add_handler(CommandHandler("status", status))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(CallbackQueryHandler(button_callback, pattern="^(approve_|reject_)"))
-    application.add_handler(CallbackQueryHandler(package_callback, pattern="^pkg_"))
+    application.add_handler(CallbackQueryHandler(package_callback, pattern="^(pkg_|claim_free$)"))
     
     # ចុះឈ្មោះ Error Handler
     application.add_error_handler(error_handler)
     
     threading.Thread(target=auto_kick_checker, args=(application,), daemon=True).start()
     
-    print("Subscription Bot with Auto-Kick is starting...")
+    print("Subscription Bot with Free Trial & Auto-Kick is starting...")
     application.run_polling()
