@@ -29,7 +29,7 @@ GROUP_CHAT_ID = -1001234567890            # <--- លេខ ID គ្រុប Te
 # រក្សាទុកកញ្ចប់ដែល User បានជ្រើសរើសបណ្តោះអាសន្ន
 user_selected_package = {}
 
-# 2. បង្កើត Database សម្រាប់គ្រប់គ្រងសមាជិកភាព (បន្ថែម free_claimed, warned និងតារាង used_receipts សម្រាប់ Anti-Cheat)
+# 2. បង្កើត Database សម្រាប់គ្រប់គ្រងសមាជិកភាព (បន្ថែម package_info សម្រាប់កត់ត្រាកញ្ចប់ និងតម្លៃ)
 def init_db():
     conn = sqlite3.connect('subscriptions.db')
     cursor = conn.cursor()
@@ -40,7 +40,8 @@ def init_db():
             expiry_date TEXT,
             kicked INTEGER DEFAULT 0,
             free_claimed INTEGER DEFAULT 0,
-            warned INTEGER DEFAULT 0
+            warned INTEGER DEFAULT 0,
+            package_info TEXT DEFAULT 'មិនមាន'
         )
     ''')
     # តារាងសម្រាប់ទប់ស្កាត់ការប្រើប្រាស់វិក្កយបត្រដដែល (Anti-Cheat មុខងារទី ៥)
@@ -113,11 +114,13 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         # កំណត់ថ្ងៃផុតកំណត់ ១ ថ្ងៃក្រោយ
         expiry = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
+        username = query.from_user.username or query.from_user.first_name
+        package_desc = "១ ថ្ងៃ - 0 ដុល្លារ (Free Trial)"
         
         cursor.execute('''
-            INSERT OR REPLACE INTO users (user_id, username, expiry_date, kicked, free_claimed, warned) 
-            VALUES (?, ?, ?, ?, ?, 0)
-        ''', (user_id, query.from_user.username or query.from_user.first_name, expiry, 0, 1))
+            INSERT OR REPLACE INTO users (user_id, username, expiry_date, kicked, free_claimed, warned, package_info) 
+            VALUES (?, ?, ?, ?, ?, 0, ?)
+        ''', (user_id, username, expiry, 0, 1, package_desc))
         conn.commit()
         conn.close()
         
@@ -168,6 +171,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     days = user_selected_package.get(user_id, 30)
+    prices = {5: "២ ដុល្លារ", 10: "៣ ដុល្លារ", 20: "៥ ដុល្លារ", 30: "៦ ដុល្លារ"}
+    price_text = prices.get(days, "មិនស្គាល់តម្លៃ")
+    package_desc = f"{days} ថ្ងៃ - {price_text}"
     
     # មុខងារទី ៣៖ បន្ថែមប៊ូតុងកែសម្រួលថ្ងៃបន្ថែម (+5d, +10d) ឱ្យ Admin ងាយស្រួលគ្រប់គ្រងរហ័ស
     keyboard = [
@@ -186,7 +192,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔔 **មានអតិថិជនស្នើសុំចូលសមាជិក!**\n\n"
         f"👤 ឈ្មោះ: {username}\n"
         f"🆔 User ID: `{user_id}`\n"
-        f"ជម្រើសកញ្ចប់: **{days} ថ្ងៃ**\n"
+        f"ជម្រើសកញ្ចប់: **{package_desc}**\n"
         f"🖼 Photo ID: `{photo_file}`\n\n"
         f"សូមពិនិត្យវិក្កយបត្រខាងក្រោម រួចចុចសម្រេចចិត្ត៖"
     )
@@ -215,6 +221,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         days = int(parts[2])
         
         expiry = (datetime.now() + timedelta(days=days)).strftime('%Y-%m-%d %H:%M:%S')
+        prices = {5: "២ ដុល្លារ", 10: "៣ ដុល្លារ", 20: "៥ ដុល្លារ", 30: "៦ ដុល្លារ"}
+        price_text = prices.get(days, "មិនស្គាល់តម្លៃ")
+        package_desc = f"{days} ថ្ងៃ - {price_text}"
         
         conn = sqlite3.connect('subscriptions.db')
         cursor = conn.cursor()
@@ -227,14 +236,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                (photo_file, user_id, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         
         cursor.execute('''
-            UPDATE users SET expiry_date = ?, kicked = 0, warned = 0 WHERE user_id = ?
-        ''', (expiry, user_id))
+            UPDATE users SET expiry_date = ?, kicked = 0, warned = 0, package_info = ? WHERE user_id = ?
+        ''', (expiry, package_desc, user_id))
         
         if cursor.rowcount == 0:
             cursor.execute('''
-                INSERT INTO users (user_id, username, expiry_date, kicked, free_claimed, warned) 
-                VALUES (?, ?, ?, ?, ?, 0)
-            ''', (user_id, "Customer", expiry, 0, 1))
+                INSERT INTO users (user_id, username, expiry_date, kicked, free_claimed, warned, package_info) 
+                VALUES (?, ?, ?, ?, ?, 0, ?)
+            ''', (user_id, "Customer", expiry, 0, 1, package_desc))
             
         conn.commit()
         conn.close()
@@ -266,22 +275,25 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         conn = sqlite3.connect('subscriptions.db')
         cursor = conn.cursor()
-        cursor.execute('SELECT expiry_date FROM users WHERE user_id = ?', (user_id,))
+        cursor.execute('SELECT expiry_date, package_info FROM users WHERE user_id = ?', (user_id,))
         res = cursor.fetchone()
         
         now = datetime.now()
         if res and res[0]:
             current_expiry = datetime.strptime(res[0], '%Y-%m-%d %H:%M:%S')
             base_time = current_expiry if current_expiry > now else now
+            old_pkg = res[1] if res[1] else "មិនមាន"
         else:
             base_time = now
+            old_pkg = "មិនមាន"
             
         new_expiry = (base_time + timedelta(days=ext_days)).strftime('%Y-%m-%d %H:%M:%S')
+        new_pkg = f"{old_pkg} + បន្ថែម {ext_days}ថ្ងៃ"
         
         cursor.execute('''
-            INSERT OR REPLACE INTO users (user_id, username, expiry_date, kicked, free_claimed, warned) 
-            VALUES (?, ?, ?, 0, 1, 0)
-        ''', (user_id, "Customer", new_expiry))
+            INSERT OR REPLACE INTO users (user_id, username, expiry_date, kicked, free_claimed, warned, package_info) 
+            VALUES (?, ?, ?, 0, 1, 0, ?)
+        ''', (user_id, "Customer", new_expiry, new_pkg))
         conn.commit()
         conn.close()
         
@@ -291,11 +303,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await query.edit_message_caption(caption=f"{query.message.caption}\n\n➕ [បានបន្ថែមថ្ងៃជោគជ័យ +{ext_days} ថ្ងៃ ប៉ុន្តែផ្ញើសារមិនទាន់ដល់ User]")
 
-# 7. មុខងារទី ៤៖ ពាក្យបញ្ជា /stats សម្រាប់ Admin មើលស្ថិតិសមាជិក
+# 7. មុខងារទី ៤៖ ពាក្យបញ្ជា /stats សម្រាប់ Admin មើលស្ថិតិសមាជិក (រួមបញ្ចូលការរាប់ចំនួន Free Trial)
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ អ្នកមិនមែនជា Admin ទេ!")
+        await update.message.reply_text(f"❌ អ្នកមិនមែនជា Admin ទេ! (User ID របស់អ្នកគឺ: `{user_id}`)", parse_mode="Markdown")
         return
         
     conn = sqlite3.connect('subscriptions.db')
@@ -306,26 +318,30 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     cursor.execute("SELECT COUNT(*) FROM users WHERE expiry_date < datetime('now')")
     expired_users = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM users WHERE free_claimed = 1")
+    free_users = cursor.fetchone()[0]
     
     conn.close()
     
     stats_text = (
         f"📊 **ស្ថិតិប្រព័ន្ធសមាជិកភាព (Admin Dashboard)**\n\n"
         f"🟢 សមាជិកសកម្ម (Active): **{active_users} នាក់**\n"
-        f"🔴 សមាជិកអស់សុពលភាព (Expired): **{expired_users} នាក់**"
+        f"🔴 សមាជិកអស់សុពលភាព (Expired): **{expired_users} នាក់**\n"
+        f"🎁 អ្នកប្រើប្រាស់សាកល្បងฟรี (Free Trial): **{free_users} នាក់**"
     )
     await update.message.reply_text(stats_text, parse_mode="Markdown")
 
-# 🆕 មុខងារថ្មីសម្រាប់ Admin៖ មើលបញ្ជីសមាជិកទាំងអស់ ឈ្មោះ និងចំនួនថ្ងៃដែលនៅសល់
+# 🆕 មុខងារថ្មីសម្រាប់ Admin៖ មើលបញ្ជីសមាជិកទាំងអស់ ឈ្មោះ វិន័យកញ្ចប់ និងចំនួនថ្ងៃដែលនៅសល់
 async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ អ្នកមិនមែនជា Admin ទេ!")
+        await update.message.reply_text(f"❌ អ្នកមិនមែនជា Admin ទេ! (User ID របស់អ្នកគឺ: `{user_id}`)", parse_mode="Markdown")
         return
         
     conn = sqlite3.connect('subscriptions.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT user_id, username, expiry_date, kicked FROM users')
+    cursor.execute('SELECT user_id, username, expiry_date, kicked, free_claimed, package_info FROM users')
     rows = cursor.fetchall()
     conn.close()
     
@@ -333,12 +349,14 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📭 មិនទាន់មានទិន្នន័យសមាជិកនៅក្នុងប្រព័ន្ធទេ។")
         return
         
-    msg = "📋 **បញ្ជីឈ្មោះ និងស្ថានភាពសមាជិកទាំងអស់៖**\n\n"
+    msg = "📋 **បញ្ជីឈ្មោះ វិន័យកញ្ចប់ និងស្ថានភាពសមាជិកទាំងអស់៖**\n\n"
     now = datetime.now()
     
     for row in rows:
-        u_id, uname, exp_str, kicked = row
-        name = uname if uname else "No Name"
+        u_id, uname, exp_str, kicked, free_claimed, package_info = row
+        name = uname if uname else "មិនមានឈ្មោះ"
+        badge = "🎁 [Free Trial]" if free_claimed == 1 else "💳 [Paid]"
+        pkg_desc = package_info if package_info else "មិនមានទិន្នន័យ"
         
         if kicked == 1:
             status_text = "🔴 បានទាត់ចេញ (Expired/Kicked)"
@@ -355,9 +373,8 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 status_text = f"📅 ផុតកំណត់ថ្ងៃ៖ {exp_str}"
                 
-        msg += f"👤 ឈ្មោះ: **{name}** (ID: `{u_id}`)\nស្ថានភាព: {status_text}\n----------------------------------\n"
+        msg += f"👤 ឈ្មោះ: **{name}** {badge}\n🆔 ID: `{u_id}`\n📦 កញ្ចប់: **{pkg_desc}**\n⏳ ស្ថានភាព: {status_text}\n----------------------------------\n"
         
-    # បើអត្ថបទវែងពេក Telegram អាចនឹង Error ដូច្នេះផ្ញើជាកំណាត់ៗបើសჭប
     if len(msg) > 4000:
         for x in range(0, len(msg), 4000):
             await update.message.reply_text(msg[x:x+4000], parse_mode="Markdown")
