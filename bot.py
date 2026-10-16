@@ -21,8 +21,9 @@ def run_web():
 threading.Thread(target=run_web, daemon=True).start()
 
 # --- ការកំណត់សំខាន់ៗ (សូមកែប្រែត្រង់នេះ) ---
-ADMIN_ID = 123456789                      # <--- ដាក់ Telegram User ID របស់អ្នក
-GROUP_CHAT_ID = -1001234567890            # <--- លេខ ID គ្រុប Telegram (ចាប់ផ្តើមដោយ -100)
+ADMIN_ID = 123456789  
+GROUP_INVITE_LINK = https://t.me/+2JquQ2gZnQE4OGU1                # <--- ដាក់ Telegram User ID របស់អ្នក
+GROUP_CHAT_ID = -1001234567890                               # <--- លេខ ID គ្រុប Telegram (ចាប់ផ្តើមដោយ -100)
 # ---------------------------------------------
 
 user_selected_package = {}
