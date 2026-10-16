@@ -21,8 +21,8 @@ def run_web():
 threading.Thread(target=run_web, daemon=True).start()
 
 --- ការកំណត់សំខាន់ៗ (សូមកែប្រែត្រង់នេះ) ---
-ADMIN_ID = 8980369344                      # <--- ដាក់ Telegram User ID របស់អ្នក
-GROUP_INVITE_LINK = "https://t.me/+2JquQ2gZnQE4OGU1"  # <--- Link ឆានែល Telegram របស់អ្នក (សម្រាប់កញ្ចប់ទូទាត់ប្រាក់)
+ADMIN_ID = 123456789                      # <--- ដាក់ Telegram User ID របស់អ្នក
+GROUP_INVITE_LINK = "https://t.me/+YourChannelInviteLink"  # <--- Link ឆានែល Telegram របស់អ្នក (សម្រាប់កញ្ចប់ទូទាត់ប្រាក់)
 GROUP_CHAT_ID = -1001234567890            # <--- លេខ ID ឆានែល Telegram របស់អ្នក (ចាប់ផ្តើមដោយ -100)
 ---------------------------------------------
 
@@ -73,7 +73,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
         f"សួស្តី {user.first_name}!\n\n"
         f"សូមស្វាគមន៍មកកាន់ប្រព័ន្ធសមាជិកភាពឆានែលរបស់យើង។\n"
-        f"សូមជ្រើសរើសកញ្ចប់ ឬសាកល្បងប្រើប្រាស់នៅខាងក្រោម៖"
+        f"សូមជ្រើសរើសកញ្ចប់ ឬសាកល្បងប្រើប្រាស់ฟรีខាងក្រោម៖"
     )
     await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
@@ -95,7 +95,7 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if result and result[0] == 1:
             conn.close()
-            await query.message.reply_text("❌ អ្នកបានប្រើប្រាស់សិទ្ធិសាកល្បងប្រើប្រាស់ចំនួន ១ ថ្ងៃរួចរាល់ហើយ!")
+            await query.message.reply_text("❌ អ្នកបានប្រើប្រាស់សិទ្ធិសាកល្បងប្រើប្រាស់ฟรี ១ ថ្ងៃរួចរាល់ហើយ!")
             return
             
         expiry = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
@@ -122,7 +122,7 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.close()
             
             success_text = (
-                f"🎉 អបអរសាទរ! អ្នកទទួលបានសិទ្ធិសាកល្បងចំនួន ១ ថ្ងៃជោគជ័យ។\n\n"
+                f"🎉 អបអរសាទរ! អ្នកទទួលបានសិទ្ធិសាកល្បងฟรี ១ ថ្ងៃជោគជ័យ។\n\n"
                 f"🔗 តំណភ្ជាប់ចូលឆានែលផ្ទាល់ខ្លួនរបស់អ្នក (ប្រើបានតែ ១ ដង និងផុតកំណត់ក្នុង ១ ថ្ងៃ):\n{group_link}\n\n"
                 f"📅 មានសុពលភាពដល់ថ្ងៃ៖ {expiry}\n"
                 f"ពិនិត្យថ្ងៃខែនៅសល់ដោយប្រើពាក្យបញ្ជា /status"
