@@ -77,7 +77,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = []
     if not result or result[0] == 0:
-        keyboard.append([InlineKeyboardButton("🎁 សាកល្បងប្រើប្រាស់ฟรี ១ ថ្ងៃ (Free Trial)", callback_data="claim_free")])
+        keyboard.append([InlineKeyboardButton("🎁 សាកល្បងប្រើប្រាស់ចំនួន ១ ថ្ងៃ (Free Trial)", callback_data="claim_free")])
     
     keyboard.extend([
         [InlineKeyboardButton("៥ ថ្ងៃ - ២ ដុល្លារ", callback_data="pkg_5")],
