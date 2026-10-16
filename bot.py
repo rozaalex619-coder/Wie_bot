@@ -122,7 +122,7 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         
         success_message = (
-            f"🎉 អបអរសាទរ! អ្នកទទួលបានសិទ្ធិសាកល្បងฟรี ១ ថ្ងៃជោគជ័យ។\n\n"
+            f"🎉 អបអរសាទរ! អ្នកទទួលបានសិទ្ធិសាកល្បងចំនួន ១ ថ្ងៃជោគជ័យ។\n\n"
             f"🔗 តំណភ្ជាប់ចូលគ្រុប (Group Link):\n{GROUP_INVITE_LINK}\n\n"
             f"📅 មានសុពលភាពដល់ថ្ងៃ៖ {expiry}\n"
             f"ពិនិត្យថ្ងៃខែនៅសល់ដោយប្រើពាក្យបញ្ជា /status"
