@@ -343,7 +343,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(stats_text, parse_mode="Markdown")
 
-# 🆕 មុខងារថ្មីសម្រាប់ Admin៖ មើលបញ្ជីសមាជិកទាំងអស់ ឈ្មោះ វិន័យកញ្ចប់ និងចំនួនថ្ងៃដែលនៅសល់
+# 🆕 មុខងារថ្មីសម្រាប់ Admin៖ មើលបញ្ជីសមាជិក ឈ្មោះ កញ្ចប់/តម្លៃ និងថ្ងៃផុតកំណត់ច្បាស់លាស់
 async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -360,7 +360,7 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📭 មិនទាន់មានទិន្នន័យសមាជិកនៅក្នុងប្រព័ន្ធទេ។")
         return
         
-    msg = "📋 **បញ្ជីឈ្មោះ កញ្ចប់ និងស្ថានភាពសមាជិកទាំងអស់៖**\n\n"
+    msg = "📋 **បញ្ជីឈ្មោះ កញ្ចប់ តម្លៃ និងថ្ងៃផុតកំណត់សមាជិកទាំងអស់៖**\n\n"
     now = datetime.now()
     
     for row in rows:
@@ -370,7 +370,7 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pkg_desc = package_info if package_info else "មិនមានទិន្នន័យ"
         
         if kicked == 1:
-            status_text = "🔴 បានទាត់ចេញ (Expired/Kicked)"
+            status_text = f"🔴 បានទាត់ចេញ | ផុតកំណត់ថ្ងៃ៖ {exp_str}"
         else:
             try:
                 exp_date = datetime.strptime(exp_str, '%Y-%m-%d %H:%M:%S')
@@ -378,13 +378,13 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     rem = exp_date - now
                     days = rem.days
                     hours = rem.seconds // 3600
-                    status_text = f"🟢 សកម្ម (សល់ {days} ថ្ងៃ និង {hours} ម៉ោង)"
+                    status_text = f"🟢 សកម្ម (សល់ {days} ថ្ងៃ និង {hours} ម៉ោង) | ផុតកំណត់៖ {exp_str}"
                 else:
-                    status_text = "🔴 ផុតកំណត់ហើយ"
+                    status_text = f"🔴 ផុតកំណត់ហើយ | កាលបរិច្ឆេទ៖ {exp_str}"
             except Exception:
                 status_text = f"📅 ផុតកំណត់ថ្ងៃ៖ {exp_str}"
                 
-        msg += f"👤 ឈ្មោះ: **{name}** {badge}\n🆔 ID: `{u_id}`\n📦 កញ្ចប់: **{pkg_desc}**\n⏳ ស្ថានភាព: {status_text}\n----------------------------------\n"
+        msg += f"👤 ឈ្មោះ: **{name}** {badge}\n🆔 ID: `{u_id}`\n📦 កញ្ចប់/តម្លៃ: **{pkg_desc}**\n⏳ ស្ថានភាព: {status_text}\n----------------------------------\n"
         
     if len(msg) > 4000:
         for x in range(0, len(msg), 4000):
