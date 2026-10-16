@@ -12,7 +12,7 @@ app_web = Flask(__name__)
 
 @app_web.route("/")
 def home():
-    return "Subscription Bot with Free Trial & Auto-Kick is running!"
+    return "Subscription Bot with Auto-Kick is running!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -21,14 +21,15 @@ def run_web():
 threading.Thread(target=run_web, daemon=True).start()
 
 --- ការកំណត់សំខាន់ៗ (សូមកែប្រែត្រង់នេះ) ---
-ADMIN_ID = 123456789                      # <--- ដាក់ Telegram User ID របស់អ្នក
-GROUP_CHAT_ID = -1001234567890            # <--- លេខ ID គ្រុប Telegram (ចាប់ផ្តើមដោយ -100)
+ADMIN_ID = 8980369344                      # <--- ដាក់ Telegram User ID របស់អ្នក
+GROUP_INVITE_LINK = "https://t.me/+2JquQ2gZnQE4OGU1"  # <--- Link ឆានែល Telegram របស់អ្នក (សម្រាប់កញ្ចប់ទូទាត់ប្រាក់)
+GROUP_CHAT_ID = -1001234567890            # <--- លេខ ID ឆានែល Telegram របស់អ្នក (ចាប់ផ្តើមដោយ -100)
 ---------------------------------------------
 
 # រក្សាទុកកញ្ចប់ដែល User បានជ្រើសរើសបណ្តោះអាសន្ន
 user_selected_package = {}
 
-# 2. បង្កើត Database សម្រាប់គ្រប់គ្រងសមាជិកភាព (បន្ថែម free_claimed)
+# 2. បង្កើត Database សម្រាប់គ្រប់គ្រងសមាជិកភាព
 def init_db():
     conn = sqlite3.connect('subscriptions.db')
     cursor = conn.cursor()
@@ -58,7 +59,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
     keyboard = []
-    # បើមិនទាន់ធ្លាប់ប្រើ Free Trial ទេ បង្ហាញប៊ូតុងសាកល្បង
     if not result or result[0] == 0:
         keyboard.append([InlineKeyboardButton("🎁 សាកល្បងប្រើប្រាស់ฟรี ១ ថ្ងៃ (Free Trial)", callback_data="claim_free")])
 
@@ -72,11 +72,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     welcome_text = (
         f"សួស្តី {user.first_name}!\n\n"
-        f"សូមជ្រើសរើសកញ្ចប់សមាជិកភាព ឬសាកល្បងប្រើប្រាស់ฟรีខាងក្រោម៖"
+        f"សូមស្វាគមន៍មកកាន់ប្រព័ន្ធសមាជិកភាពឆានែលរបស់យើង។\n"
+        f"សូមជ្រើសរើសកញ្ចប់ ឬសាកល្បងប្រើប្រាស់នៅខាងក្រោម៖"
     )
     await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
-# 4. ដោះស្រាយពេលអតិថិជនចុចយក Free Trial ឬកញ្ចប់ផ្សេងៗ
+# 4. ដោះស្រាយពេលអតិថិជនចុចជ្រើសរើសកញ្ចប់ ឬ Free Trial
 async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -89,18 +90,17 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "claim_free":
         conn = sqlite3.connect('subscriptions.db')
         cursor = conn.cursor()
-        
         cursor.execute('SELECT free_claimed FROM users WHERE user_id = ?', (user_id,))
         result = cursor.fetchone()
         
         if result and result[0] == 1:
             conn.close()
-            await query.message.reply_text("❌ អ្នកបានប្រើប្រាស់សិទ្ធិសាកល្បងប្រើប្រាស់ฟรี ១ ថ្ងៃរួចរាល់ហើយ!")
+            await query.message.reply_text("❌ អ្នកបានប្រើប្រាស់សិទ្ធិសាកល្បងប្រើប្រាស់ចំនួន ១ ថ្ងៃរួចរាល់ហើយ!")
             return
             
         expiry = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
         
-        # បង្កើត Unique Group Invite Link ( member_limit=1 ប្រើបានតែ ១ ដងគត់ និងផុតកំណត់ក្នុង ១ ថ្ងៃ )
+        # បង្កើត Unique Channel Invite Link (ប្រើបានតែ ១ ដងគត់ ក្នុងរយៈពេល ១ ថ្ងៃ)
         try:
             expire_time = datetime.now() + timedelta(days=1)
             invite_link_obj = await context.bot.create_chat_invite_link(
@@ -110,24 +110,27 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             group_link = invite_link_obj.invite_link
         except Exception as e:
-            group_link = "មិនអាចបង្កើត Link បានទេ សូមទាក់ទង Admin"
+            group_link = None
             print(f"Error creating invite link: {e}")
 
-        cursor.execute('''
-            INSERT OR REPLACE INTO users (user_id, username, expiry_date, kicked, free_claimed) 
-            VALUES (?, ?, ?, ?, ?)
-        ''', (user_id, username, expiry, 0, 1))
-        conn.commit()
-        conn.close()
-        
-        success_text = (
-            f"🎁 អបអរសាទរ! អ្នកបានទទួលបានសិទ្ធិសាកល្បងប្រើប្រាស់ฟรี ១ ថ្ងៃជោគជ័យ។\n\n"
-            f"👤 ឈ្មោះ Telegram: {username}\n"
-            f"🔗 តំណភ្ជាប់ចូលគ្រុបរបស់អ្នក (ប្រើបានតែម្តងគត់):\n{group_link}\n\n"
-            f"📅 មានសុពលភាពដល់ថ្ងៃ៖ {expiry}\n"
-            f"ពិនិត្យថ្ងៃខែនៅសល់ដោយប្រើពាក្យបញ្ជា /status"
-        )
-        await query.message.reply_text(success_text)
+        if group_link:
+            cursor.execute('''
+                INSERT OR REPLACE INTO users (user_id, username, expiry_date, kicked, free_claimed) 
+                VALUES (?, ?, ?, ?, ?)
+            ''', (user_id, username, expiry, 0, 1))
+            conn.commit()
+            conn.close()
+            
+            success_text = (
+                f"🎉 អបអរសាទរ! អ្នកទទួលបានសិទ្ធិសាកល្បងចំនួន ១ ថ្ងៃជោគជ័យ។\n\n"
+                f"🔗 តំណភ្ជាប់ចូលឆានែលផ្ទាល់ខ្លួនរបស់អ្នក (ប្រើបានតែ ១ ដង និងផុតកំណត់ក្នុង ១ ថ្ងៃ):\n{group_link}\n\n"
+                f"📅 មានសុពលភាពដល់ថ្ងៃ៖ {expiry}\n"
+                f"ពិនិត្យថ្ងៃខែនៅសល់ដោយប្រើពាក្យបញ្ជា /status"
+            )
+            await query.message.reply_text(success_text)
+        else:
+            conn.close()
+            await query.message.reply_text("⚠️ មិនអាចបង្កើត Link បានទេ! សូមប្រាកដថា Bot ត្រូវបានដាក់ជា Admin ក្នុងឆានែល និងមានសិទ្ធិបង្កើត Link។")
 
     elif data.startswith("pkg_"):
         days = int(data.split("_")[1])
@@ -165,7 +168,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     admin_caption = (
-        f"🔔 **មានអតិថិជនស្នើសុំចូលសមាជិក!**\n\n"
+        f"🔔 **មានអតិថិជនស្នើសុំចូលសមាជិកឆានែល!**\n\n"
         f"👤 ឈ្មោះ: {username}\n"
         f"🆔 User ID: `{user_id}`\n"
         f"ជម្រើសកញ្ចប់: **{days} ថ្ងៃ**\n\n"
@@ -198,30 +201,17 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         expiry = (datetime.now() + timedelta(days=days)).strftime('%Y-%m-%d %H:%M:%S')
         
-        # បង្កើត Unique Group Invite Link ពេល Approve សម្រាប់កញ្ចប់បង់ប្រាក់
-        try:
-            expire_time = datetime.now() + timedelta(days=days)
-            invite_link_obj = await context.bot.create_chat_invite_link(
-                chat_id=GROUP_CHAT_ID,
-                member_limit=1,
-                expire_date=expire_time
-            )
-            group_link = invite_link_obj.invite_link
-        except Exception as e:
-            group_link = "មិនអាចបង្កើត Link បានទេ សូមទាក់ទង Admin"
-            print(f"Error creating invite link: {e}")
-
         conn = sqlite3.connect('subscriptions.db')
         cursor = conn.cursor()
-        cursor.execute('INSERT OR REPLACE INTO users (user_id, username, expiry_date, kicked, free_claimed) VALUES (?, ?, ?, ?, (SELECT free_claimed FROM users WHERE user_id = ?))', 
-                       (user_id, "Customer", expiry, 0, user_id))
+        cursor.execute('INSERT OR REPLACE INTO users (user_id, username, expiry_date, kicked) VALUES (?, ?, ?, ?)', 
+                       (user_id, "Customer", expiry, 0))
         conn.commit()
         conn.close()
         
         try:
             success_message = (
                 f"🎉 អបអរសាទរ! ការទូទាត់របស់អ្នកត្រូវបាន Admin យល់ព្រមហើយ។\n\n"
-                f"🔗 តំណភ្ជាប់ចូលគ្រុបរបស់អ្នក (ប្រើបានតែម្តងគត់):\n{group_link}\n\n"
+                f"🔗 តំណភ្ជាប់ចូលឆានែល (Channel Link):\n{GROUP_INVITE_LINK}\n\n"
                 f"📅 សមាជិកភាពមានសុពលភាពចំនួន {days} ថ្ងៃ ដល់ថ្ងៃ៖ {expiry}\n"
                 f"ពិនិត្យថ្ងៃខែនៅសល់ដោយប្រើពាក្យបញ្ជា /status"
             )
@@ -260,7 +250,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("អ្នកមិនទាន់ជាសមាជិកទេ។ សូមផ្ញើពាក្យ /start ដើម្បីជ្រើសរើសកញ្ចប់សមាជិកភាព។")
 
-# 8. ប្រព័ន្ធស្វ័យប្រវត្តិពិនិត្យ និងទាត់ចេញ (Auto-Kick Worker)
+# 8. ប្រព័ន្ធស្វ័យប្រវត្តិពិនិត្យ និងទាត់ចេញ (Auto-Kick Worker) សម្រាប់ឆានែល
 def auto_kick_checker(application):
     while True:
         try:
@@ -274,12 +264,13 @@ def auto_kick_checker(application):
             for row in expired_users:
                 user_id = row[0]
                 try:
+                    # សម្រាប់ឆានែល ប្រើ ban_chat_member ដើម្បីដកសមាជិកចេញ
                     application.bot.ban_chat_member(chat_id=GROUP_CHAT_ID, user_id=user_id)
                     application.bot.unban_chat_member(chat_id=GROUP_CHAT_ID, user_id=user_id)
                     
                     application.bot.send_message(
                         chat_id=user_id, 
-                        text="⏰ សមាជិកភាពរបស់អ្នកបានផុតកំណត់ហើយ! Bot បានទាត់អ្នកចេញពីគ្រុបដោយស្វ័យប្រវត្តិ។\n\n👉 សូមចុច /start ដើម្បីបង់ប្រាក់ទិញកញ្ចប់សមាជិកភាពថ្មី និងចូលគ្រុបវិញ។"
+                        text="⏰ សមាជិកភាពរបស់អ្នកបានផុតកំណត់ហើយ! Bot បានដកអ្នកចេញពីឆានែលដោយស្វ័យប្រវត្តិ។\n\n👉 សូមចុច /start ដើម្បីបង់ប្រាក់ទិញកញ្ចប់សមាជិកភាពថ្មី និងចូលឆានែលវិញ។"
                     )
                 except Exception as e:
                     print(f"Error kicking user {user_id}: {e}")
@@ -311,5 +302,5 @@ if __name__ == "__main__":
 
     threading.Thread(target=auto_kick_checker, args=(application,), daemon=True).start()
 
-    print("Subscription Bot with Free Trial & Auto-Kick is starting...")
+    print("Subscription Bot with Auto-Kick for Channel is starting...")
     application.run_polling()
