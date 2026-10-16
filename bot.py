@@ -20,9 +20,9 @@ def run_web():
 
 threading.Thread(target=run_web, daemon=True).start()
 
-# --- ការកំណត់សំខាន់ៗ (សូមកែប្រែត្រង់នេះ) ---
+# --- ការកំណត់សំខាន់ៗ (សូមដាក់ Link គ្រុប Telegram ពិតប្រាកដរបស់អ្នកនៅទីនេះ) ---
 ADMIN_ID = 8980369344                      # <--- ដាក់ Telegram User ID របស់អ្នក
-GROUP_INVITE_LINK = "https://t.me/+YourGroupInviteLink"  # <--- Link គ្រុប Telegram របស់អ្នក
+GROUP_INVITE_LINK = "https://t.me/+2JquQ2gZnQE4OGU1"  # <--- បានកែដាក់ Link គ្រុបពិតប្រាកដរបស់អ្នករួចរាល់
 GROUP_CHAT_ID = -1001234567890            # <--- លេខ ID គ្រុប Telegram (ចាប់ផ្តើមដោយ -100)
 # ---------------------------------------------
 
@@ -221,7 +221,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # កត់ត្រាវិក្កយបត្រទុកដើម្បីការពារការយកមកប្រើซ้ำ (Anti-Cheat មុខងារទី ៥)
         if query.message.photo:
-            # ទាញយក file_id ពី caption ឬ message object បើមាន
             photo_file = query.message.photo[-1].file_id if hasattr(query.message, 'photo') else None
             if photo_file:
                 cursor.execute('INSERT OR IGNORE INTO used_receipts (photo_file_id, user_id, used_at) VALUES (?, ?, ?)', 
@@ -231,7 +230,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             UPDATE users SET expiry_date = ?, kicked = 0, warned = 0 WHERE user_id = ?
         ''', (expiry, user_id))
         
-        # ប្រសិនបើ User មិនទាន់មានក្នុង DB ទេ (ករណីកម្រ) ធ្វើការ Insert បន្ថែម
         if cursor.rowcount == 0:
             cursor.execute('''
                 INSERT INTO users (user_id, username, expiry_date, kicked, free_claimed, warned) 
