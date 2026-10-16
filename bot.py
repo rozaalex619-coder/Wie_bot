@@ -63,7 +63,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # បើមិនទាន់មានក្នុង Database ឬមិនទាន់បាន Claim Free Trial ទេ បង្ហាញប៊ូតុង Free Trial
     if not result or result[0] == 0:
-        keyboard.append([InlineKeyboardButton("🎁 សាកល្បងប្រើប្រាស់ฟรี ១ ថ្ងៃ (Free Trial)", callback_data="claim_free")])
+        keyboard.append([InlineKeyboardButton("🎁 សាកល្បងប្រើប្រាស់ចំនួន ១ ថ្ងៃ (Free Trial)", callback_data="claim_free")])
     
     # បន្ថែមបញ្ជីកញ្ចប់តម្លៃធម្មតា
     keyboard.extend([
