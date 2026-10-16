@@ -1,12 +1,13 @@
 import threading
 import sqlite3
 import time
+import os
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 from flask import Flask
 
-# 1. ផ្នែក Flask សម្រាប់រក្សាឱ្យ Bot រត់បានយូរលើ Render
+# 1. ផ្នែក Flask សម្រាប់រក្សាឱ្យ Bot រត់បានយូរលើ Render (ប្រើ os.environ.get("PORT"))
 app_web = Flask(__name__)
 
 @app_web.route("/")
@@ -14,7 +15,8 @@ def home():
     return "Subscription Bot with Auto-Kick is running!"
 
 def run_web():
-    app_web.run(host="0.0.0.0", port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    app_web.run(host="0.0.0.0", port=port)
 
 threading.Thread(target=run_web, daemon=True).start()
 
@@ -219,6 +221,10 @@ def auto_kick_checker(application):
             
         time.sleep(60)
 
+# 9. Error Handler ការពារកុំឱ្យ Bot គាំងពេលមានបញ្ហាអនឡាញ
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    print(f"Update {update} caused error {context.error}")
+
 if __name__ == "__main__":
     application = ApplicationBuilder().token("8907453817:AAGqGpbWJzbWXFt1Vqcgso9ytQmwFiih0zc").build()
     
@@ -227,6 +233,9 @@ if __name__ == "__main__":
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(CallbackQueryHandler(button_callback, pattern="^(approve_|reject_)"))
     application.add_handler(CallbackQueryHandler(package_callback, pattern="^pkg_"))
+    
+    # ចុះឈ្មោះ Error Handler
+    application.add_error_handler(error_handler)
     
     threading.Thread(target=auto_kick_checker, args=(application,), daemon=True).start()
     
