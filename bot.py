@@ -14,7 +14,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import TelegramError
 from telegram.ext import (
     Application, ApplicationBuilder, CallbackQueryHandler, CommandHandler,
-    ContextTypes, MessageHandler, filters
+    ContextTypes, MessageHandler, ChatJoinRequestHandler, filters
 )
 
 # ============================================================
@@ -173,6 +173,18 @@ def init_db():
                         created_at TEXT NOT NULL,
                         reviewed_at TEXT,
                         reviewed_by BIGINT
+                    )
+                """)
+                # Each private invite link is bound to exactly one paid Telegram user.
+                # Join requests are checked against this table before access is granted.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS invite_links (
+                        invite_link TEXT PRIMARY KEY,
+                        user_id BIGINT NOT NULL,
+                        photo_unique_id TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        expires_at TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'active'
                     )
                 """)
         logger.info("Database initialized")
@@ -429,6 +441,113 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ មិនអាចផ្ញើវិក្កយបត្រទៅ Admin បានទេ។")
 
 
+# ------------------ Private invite security ------------------
+async def handle_chat_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Only allow the paid user assigned to a private invite link to join."""
+    join_request = update.chat_join_request
+    if not join_request or join_request.chat.id != GROUP_CHAT_ID:
+        return
+
+    joining_user_id = join_request.from_user.id
+    invite_obj = join_request.invite_link
+    invite_url = invite_obj.invite_link if invite_obj else None
+    if not invite_url:
+        try:
+            await context.bot.decline_chat_join_request(
+                chat_id=GROUP_CHAT_ID, user_id=joining_user_id
+            )
+        except TelegramError:
+            logger.exception("Could not decline join request without a known invite link")
+        return
+
+    conn = get_db_connection()
+    if conn is None:
+        logger.error("Cannot validate join request: database unavailable")
+        return  # fail closed: do not approve anyone if validation is unavailable
+
+    assigned_user_id = None
+    status_value = None
+    expired = False
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT user_id, status, expires_at FROM invite_links WHERE invite_link = %s",
+                    (invite_url,),
+                )
+                row = cur.fetchone()
+                if row:
+                    assigned_user_id, status_value, expires_text = row
+                    expires_dt = parse_dt(expires_text)
+                    expired = not expires_dt or expires_dt <= now_dt()
+    except Exception:
+        logger.exception("Could not validate private invite link")
+        return  # fail closed
+    finally:
+        conn.close()
+
+    if not assigned_user_id or assigned_user_id != joining_user_id or status_value != "active" or expired:
+        try:
+            await context.bot.decline_chat_join_request(
+                chat_id=GROUP_CHAT_ID, user_id=joining_user_id
+            )
+            await context.bot.send_message(
+                chat_id=joining_user_id,
+                text="❌ សំណើចូលក្រុមនេះមិនត្រូវបានអនុម័តទេ។ Link នេះភ្ជាប់ជាមួយគណនីអ្នកទិញម្នាក់ប៉ុណ្ណោះ ឬវាបានផុតកំណត់។ សូមទិញសេវាកម្ម ឬទាក់ទង Admin។",
+            )
+        except TelegramError:
+            logger.info("Declined unauthorized/expired join request from %s", joining_user_id)
+        return
+
+    # Atomically claim this invite so duplicate join requests cannot both pass.
+    conn = get_db_connection()
+    if conn is None:
+        return
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE invite_links SET status = 'processing' WHERE invite_link = %s AND user_id = %s AND status = 'active'",
+                    (invite_url, joining_user_id),
+                )
+                claimed_rows = cur.rowcount
+        if claimed_rows != 1:
+            try:
+                await context.bot.decline_chat_join_request(chat_id=GROUP_CHAT_ID, user_id=joining_user_id)
+            except TelegramError:
+                pass
+            return
+    except Exception:
+        logger.exception("Could not atomically claim invite link")
+        return
+    finally:
+        conn.close()
+
+    try:
+        # Ensure the paid membership has not expired while the link was pending.
+        member = db_execute("SELECT expiry_date FROM users WHERE user_id = %s", (joining_user_id,), fetchone=True)
+        member_expiry = parse_dt(member[0]) if member and member[0] else None
+        if not member_expiry or member_expiry <= now_dt():
+            db_execute("UPDATE invite_links SET status = 'expired' WHERE invite_link = %s", (invite_url,))
+            await context.bot.decline_chat_join_request(chat_id=GROUP_CHAT_ID, user_id=joining_user_id)
+            await context.bot.send_message(chat_id=joining_user_id, text="❌ សមាជិកភាពរបស់អ្នកផុតកំណត់ហើយ។ សូមបន្តទិញសេវាកម្ម។")
+            return
+
+        await context.bot.approve_chat_join_request(chat_id=GROUP_CHAT_ID, user_id=joining_user_id)
+        db_execute("UPDATE invite_links SET status = 'used' WHERE invite_link = %s", (invite_url,))
+        try:
+            await context.bot.revoke_chat_invite_link(chat_id=GROUP_CHAT_ID, invite_link=invite_url)
+        except TelegramError:
+            logger.warning("Could not revoke used invite link for user %s", joining_user_id)
+        await context.bot.send_message(chat_id=joining_user_id, text="✅ សំណើចូលក្រុមរបស់អ្នកត្រូវបានអនុម័តហើយ។ សូមស្វាគមន៍!")
+    except TelegramError:
+        logger.exception("Could not approve valid join request for user %s", joining_user_id)
+        try:
+            db_execute("UPDATE invite_links SET status = 'active' WHERE invite_link = %s AND status = 'processing'", (invite_url,))
+        except Exception:
+            logger.exception("Could not reset invite after Telegram approval error")
+
+
 # --------------------- Admin receipt actions ------------------
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -508,21 +627,49 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         finally:
             conn.close()
 
+        # Create a join-request link, not a normal invite link. The bot only
+        # approves the join request if it comes from this exact paid user.
+        invite_expiry = now_dt() + timedelta(hours=24)
         try:
             invite = await context.bot.create_chat_invite_link(
-                chat_id=GROUP_CHAT_ID, member_limit=1
+                chat_id=GROUP_CHAT_ID,
+                creates_join_request=True,
+                expire_date=invite_expiry,
+                name=f"paid-{user_id}-{unique_id[:12]}",
             )
             invite_url = invite.invite_link
-        except TelegramError:
-            logger.exception("Could not create one-time invite")
-            invite_url = GROUP_INVITE_LINK
+            db_execute(
+                """INSERT INTO invite_links
+                   (invite_link, user_id, photo_unique_id, created_at, expires_at, status)
+                   VALUES (%s, %s, %s, %s, %s, 'active')
+                   ON CONFLICT (invite_link) DO NOTHING""",
+                (invite_url, user_id, unique_id, get_now(), fmt_dt(invite_expiry)),
+            )
+        except Exception:
+            logger.exception("Could not create/store user-bound join-request invite")
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        "✅ ការទូទាត់ត្រូវបានអនុម័តហើយ ប៉ុន្តែប្រព័ន្ធបង្កើត Link ចូលក្រុមមិនបានទេ។\n"
+                        "សូមទាក់ទង Admin ដើម្បីទទួលបាន Link ថ្មី។ កុំប្រើ Link ចាស់ ឬ Link សាធារណៈ។"
+                    ),
+                )
+                await context.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=f"⚠️ ការទូទាត់របស់ User {user_id} បានអនុម័ត ប៉ុន្តែបង្កើត Link មិនបាន។ សូមជួយផ្ញើ Link ថ្មីដោយសុវត្ថិភាព។",
+                )
+            except TelegramError:
+                logger.exception("Could not notify about invite creation failure")
+            return
 
         try:
             await context.bot.send_message(
                 chat_id=user_id,
                 text=(
                     "🎉 ការទូទាត់របស់អ្នកត្រូវបានអនុម័តហើយ!\n\n"
-                    f"🔗 Link ចូលគ្រុប៖ {invite_url}\n\n"
+                    f"🔗 Link ស្នើសុំចូលគ្រុប (មានសុពលភាព ២៤ ម៉ោង)៖ {invite_url}\n\n"
+                    "🔐 សុវត្ថិភាព៖ Link នេះមិនអនុញ្ញាតឱ្យអ្នកផ្សេងចូលបានទេ។ Bot នឹងពិនិត្យ User ID មុនអនុម័តសំណើចូលក្រុម។\n"
                     f"📅 សមាជិកភាពមានសុពលភាពដល់៖ {expiry_text}\n"
                     "ប្រើ /status ដើម្បីពិនិត្យស្ថានភាព។"
                 ),
@@ -981,6 +1128,7 @@ def main():
     application.add_handler(CommandHandler("export", export_command))
 
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    application.add_handler(ChatJoinRequestHandler(handle_chat_join_request))
     application.add_handler(CallbackQueryHandler(button_callback, pattern=r"^(approve_|reject_|ext_)"))
     application.add_handler(CallbackQueryHandler(admin_panel_callback, pattern=r"^admin_"))
     application.add_handler(CallbackQueryHandler(package_callback, pattern=r"^(pkg_|get_referral_link|user_)"))
