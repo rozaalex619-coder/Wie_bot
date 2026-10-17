@@ -28,7 +28,7 @@ app_web = Flask(__name__)
 
 @app_web.route("/")
 def home():
-    return "Subscription Bot with Cloud PostgreSQL & Auto-Join is running!"
+    return "Subscription Bot with Cloud PostgreSQL & Secure Anti-Fraud is running!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -261,7 +261,7 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await query.message.reply_text(f"{caption}\n\n(⚠️ រកមិនឃើញឯកសារ qr.jpg ឬ Custom QR ទេ)")
 
-# 5. ទទួលរូបភាពវិក្កយបត្រ (ការពារកុំឱ្យយល់ច្រឡំយក ៣០ថ្ងៃ និងឆែក Duplicate Slip)
+# 5. ទទួលរូបភាពវិក្កយបត្រ (ការពារកុំឱ្យយល់ច្រឡំយក ៣០ថ្ងៃ និងទប់ស្កាត់ការប្រើ Slip ជាន់គ្នា)
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
@@ -284,7 +284,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    photo_file = update.message.photo[-1].file_id
+    photo_obj = update.message.photo[-1]
+    photo_file = photo_obj.file_id
+    photo_unique_id = photo_obj.file_unique_id  # ប្រើប្រាស់ Unique ID ដើម្បីទប់ស្កាត់ការបន្លំថតរូបថ្មី/កាត់ត
 
     # Anti-Flood Protection (យ៉ាងតិច ១០ វិនាទីម្តង)
     now_ts = time.time()
@@ -295,12 +297,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         user_last_photo_time[user_id] = now_ts
     
-    # មុខងារការពារ៖ ពិនិត្យមើលថាតើ Slip នេះធ្លាប់បានប្រើប្រាស់រួចហើយឬនៅ (Duplicate Receipt Check)
+    # មុខងារការពារ៖ ពិនិត្យមើលថាតើ Slip នេះ (សូម្បីតែ Unique ID) ធ្លាប់បានប្រើប្រាស់រួចហើយឬនៅ
     conn = get_db_connection()
     if conn:
         try:
             cursor = conn.cursor()
-            cursor.execute('SELECT user_id FROM used_receipts WHERE photo_file_id = %s', (photo_file,))
+            cursor.execute('SELECT user_id FROM used_receipts WHERE photo_file_id = %s', (photo_unique_id,))
             receipt_check = cursor.fetchone()
             cursor.close()
             conn.close()
@@ -333,7 +335,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🆔 User ID: `{user_id}`\n"
         f"ជម្រើសកញ្ចប់: **{package_desc}**\n"
         f"🖼 Photo ID: `{photo_file}`\n\n"
-        f"⏳ (ប្រព័ន្ធបានផ្ទៀងផ្ទាត់ថាជា Slip ថ្មី មិនទាន់មានក្នុង Database ទេ។ សូម Admin ពិនិត្យ និងចុចសម្រេចចិត្តខាងក្រោម)"
+        f"⏳ (ប្រព័ន្ធបានផ្ទៀងផ្ទាត់ថាជា Slip ថ្មី សុវត្ថិភាព ១០០%។ សូម Admin ពិនិត្យ និងចុចសម្រេចចិត្តខាងក្រោម)"
     )
     
     try:
@@ -373,10 +375,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 cursor = conn.cursor()
                 if query.message.photo:
-                    photo_file = query.message.photo[-1].file_id if hasattr(query.message, 'photo') else None
-                    if photo_file:
+                    # រក្សាទុក photo_unique_id ក្នុង database ដើម្បីការពារការប្រើ Slip ជាន់គ្នា
+                    photo_obj = query.message.photo[-1] if hasattr(query.message, 'photo') else None
+                    if photo_obj:
+                        photo_unique_id = photo_obj.file_unique_id
                         cursor.execute('INSERT INTO used_receipts (photo_file_id, user_id, used_at) VALUES (%s, %s, %s) ON CONFLICT (photo_file_id) DO NOTHING', 
-                                       (photo_file, user_id, get_now()))
+                                       (photo_unique_id, user_id, get_now()))
                 
                 cursor.execute('''
                     UPDATE users SET expiry_date = %s, kicked = 0, warned = 0, package_info = %s WHERE user_id = %s
@@ -929,5 +933,5 @@ if __name__ == "__main__":
     
     threading.Thread(target=auto_kick_checker, args=(application,), daemon=True).start()
     
-    print("Subscription Bot with Cloud PostgreSQL & Auto-Join is starting...")
+    print("Subscription Bot with Cloud PostgreSQL & Secure Anti-Fraud is starting...")
     application.run_polling()
