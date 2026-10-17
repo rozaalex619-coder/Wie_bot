@@ -30,9 +30,8 @@ threading.Thread(target=run_web, daemon=True).start()
 
 # --- ការកំណត់សំខាន់ៗ ---
 ADMIN_ID = 8980369344                      
-CHANNEL_ADMIN_LINK = "https://t.me/+2JquQ2gZnQE4OGU1"  # Link សម្រាប់ Admin ប្រើប្រាស់ផ្ទាល់
-CHANNEL_INVITE_LINK = "https://t.me/+tN6CNA6hInBjN2U9"  # Link សម្រាប់ អតិថិជន ចូល
-CHANNEL_CHAT_ID = -1004404523665            # ID របស់ Channel / Group របស់បង
+GROUP_INVITE_LINK = "https://t.me/+1_JA7CSmMoYxMDg1"  # Link សម្រាប់ Admin ប្រើប្រាស់ផ្ទាល់
+GROUP_CHAT_ID = -1004400009713            # ID របស់ Channel / Group របស់បង
 # ---------------------------------------------
 
 # ទាញយក Database URL ពី Render Environment Variable
@@ -594,7 +593,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             days = remaining.days
             hours = remaining.seconds // 3600
             
-            keyboard = [[InlineKeyboardButton("💳 បន្ត / បន្តសមាជិកភាព (Extend)", callback_data="extend_menu")]]
+            keyboard = [[InlineKeyboardButton("💳 ต่ออายุ / បន្តសមាជិកភាព (Extend)", callback_data="extend_menu")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             await update.message.reply_text(
@@ -611,7 +610,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("អ្នកមិនទាន់ជាសមាជិកទេ។ សូមផ្ញើពាក្យ /start ដើម្បីជ្រើសរើសកញ្ចប់សមាជិកភាព។")
 
-# 11. ដោះស្រាយពេល User ចុចប៊ូតុងបន្ត (Extend Menu)
+# 11. ដោះស្រាយពេល User ចុចប៊ូតុងต่ออายุ (Extend Menu)
 async def extend_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -623,7 +622,7 @@ async def extend_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         [InlineKeyboardButton("៣០ ថ្ងៃ - ៦ ដុល្លារ", callback_data="pkg_30")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("📦 សូមជ្រើសរើសកញ្ចប់សម្រាប់សេវាកម្ម (Extend)៖", reply_markup=reply_markup)
+    await query.message.reply_text("📦 សូមជ្រើសរើសកញ្ចប់សម្រាប់ต่ออายุ (Extend)៖", reply_markup=reply_markup)
 
 # Auto-Kick Worker & Warning Check
 def auto_kick_checker(application):
@@ -641,7 +640,7 @@ def auto_kick_checker(application):
                 for row in warn_users:
                     u_id = row[0]
                     try:
-                        keyboard = [[InlineKeyboardButton("💳 បន្ត / បន្តកញ្ចប់ឥឡូវនេះ", callback_data="extend_menu")]]
+                        keyboard = [[InlineKeyboardButton("💳 ต่ออายุ / បន្តកញ្ចប់ឥឡូវនេះ", callback_data="extend_menu")]]
                         reply_markup = InlineKeyboardMarkup(keyboard)
                         application.bot.send_message(
                             chat_id=u_id,
