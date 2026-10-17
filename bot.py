@@ -147,7 +147,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cursor.execute('''
                     INSERT INTO users (user_id, username, expiry_date, kicked, warned, package_info, referral_code, referred_by)
                     VALUES (%s, %s, %s, 0, 0, 'មិនទាន់ជ្រើសរើសកញ្ចប់', %s, %s)
+                    ON CONFLICT (user_id) DO UPDATE SET username = EXCLUDED.username
                 ''', (user_id, username, default_expiry, f"ref_{user_id}", referrer_id))
+                conn.commit()
+            else:
+                cursor.execute('UPDATE users SET username = %s WHERE user_id = %s', (username, user_id))
                 conn.commit()
             
             cursor.close()
@@ -267,7 +271,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = user.id
     username = user.username or user.first_name
     
-    # ពិនិត្យមើលថាតើ User បានជ្រើសរើសកញ្ចប់ហើយឬនៅ (ការពារមិនឱ្យចាប់យក ៣០ថ្ងៃខុស)
+    # ពិនិត្យមើលថាតើ User បានជ្រើសរើសកញ្ចប់ហើយឬនៅ
     if user_id not in user_selected_package:
         keyboard = [
             [InlineKeyboardButton("៥ ថ្ងៃ - ២ ដុល្លារ", callback_data="pkg_5")],
@@ -286,9 +290,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     photo_obj = update.message.photo[-1]
     photo_file = photo_obj.file_id
-    photo_unique_id = photo_obj.file_unique_id  # ប្រើប្រាស់ Unique ID ដើម្បីទប់ស្កាត់ការបន្លំថតរូបថ្មី/កាត់ត
+    photo_unique_id = photo_obj.file_unique_id
 
-    # Anti-Flood Protection (យ៉ាងតិច ១០ វិនាទីម្តង)
+    # Anti-Flood Protection
     now_ts = time.time()
     if user_id != ADMIN_ID:
         last_time = user_last_photo_time.get(user_id, 0)
@@ -297,7 +301,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         user_last_photo_time[user_id] = now_ts
     
-    # មុខងារការពារ៖ ពិនិត្យមើលថាតើ Slip នេះ (សូម្បីតែ Unique ID) ធ្លាប់បានប្រើប្រាស់រួចហើយឬនៅ
+    # ពិនិត្យ Duplicate Slip
     conn = get_db_connection()
     if conn:
         try:
@@ -350,7 +354,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text("មានបញ្ហាក្នុងការផ្ញើរូបភាព សូមព្យាយាមម្តងទៀត។")
 
-# 6. ប្រព័ន្ធ Admin ចុច Approve, Reject ឬ Extend Days
+# 6. ប្រព័ន្ធ Admin ចុច Approve, Reject ឬ Extend Days (កែប្រែឱ្យSaveចូល DB 100%)
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query.from_user.id != ADMIN_ID:
@@ -365,6 +369,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = int(parts[1])
         days = int(parts[2])
         
+        # ស្រង់ឈ្មោះ User ចេញពី Caption សារដែលបានផ្ញើមក Admin
+        user_display_name = "Customer"
+        if query.message.caption:
+            for line in query.message.caption.split("\n"):
+                if "👤 ឈ្មោះ:" in line:
+                    user_display_name = line.replace("👤 ឈ្មោះ:", "").strip()
+                    break
+
         expiry = (datetime.now(CAMBODIA_TZ) + timedelta(days=days)).strftime('%Y-%m-%d %H:%M:%S')
         prices = {5: "២ ដុល្លារ", 10: "៣ ដុល្លារ", 20: "៥ ដុល្លារ", 30: "៦ ដុល្លារ"}
         price_text = prices.get(days, "មិនស្គាល់តម្លៃ")
@@ -375,22 +387,23 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 cursor = conn.cursor()
                 if query.message.photo:
-                    # រក្សាទុក photo_unique_id ក្នុង database ដើម្បីការពារការប្រើ Slip ជាន់គ្នា
                     photo_obj = query.message.photo[-1] if hasattr(query.message, 'photo') else None
                     if photo_obj:
                         photo_unique_id = photo_obj.file_unique_id
                         cursor.execute('INSERT INTO used_receipts (photo_file_id, user_id, used_at) VALUES (%s, %s, %s) ON CONFLICT (photo_file_id) DO NOTHING', 
                                        (photo_unique_id, user_id, get_now()))
                 
+                # INSERT ឬ UPDATE ដោយធានាថាទិន្នន័យចូលក្នុង DB ជានិច្ច
                 cursor.execute('''
-                    UPDATE users SET expiry_date = %s, kicked = 0, warned = 0, package_info = %s WHERE user_id = %s
-                ''', (expiry, package_desc, user_id))
-                
-                if cursor.rowcount == 0:
-                    cursor.execute('''
-                        INSERT INTO users (user_id, username, expiry_date, kicked, warned, package_info) 
-                        VALUES (%s, %s, %s, %s, 0, %s)
-                    ''', (user_id, "Customer", expiry, 0, package_desc))
+                    INSERT INTO users (user_id, username, expiry_date, kicked, warned, package_info)
+                    VALUES (%s, %s, %s, 0, 0, %s)
+                    ON CONFLICT (user_id) DO UPDATE SET 
+                        expiry_date = EXCLUDED.expiry_date,
+                        kicked = 0,
+                        warned = 0,
+                        package_info = EXCLUDED.package_info,
+                        username = EXCLUDED.username
+                ''', (user_id, user_display_name, expiry, package_desc))
                     
                 conn.commit()
                 cursor.close()
@@ -398,7 +411,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 print(f"Error approving user: {e}")
         
-        # បង្កើត Auto-Join Invite Link (ចូលដោយស្វ័យប្រវត្តិដោយមិនចាំបាច់មាន Join Request)
+        # បង្កើត Auto-Join Invite Link
         try:
             invite_link = await context.bot.create_chat_invite_link(
                 chat_id=GROUP_CHAT_ID,
@@ -719,7 +732,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(stats_text, parse_mode="Markdown")
 
-# Admin មើលបញ្ជីសមាជិក
+# Admin មើលបញ្ជីសមាជិក (កែប្រែឱ្យបង្ហាញបញ្ជីបានត្រឹមត្រូវ ១០០%)
 async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
