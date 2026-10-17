@@ -42,10 +42,8 @@ GROUP_INVITE_LINK = "https://t.me/+1_JA7CSmMoYxMDg1"  # Link សម្រាប�
 GROUP_CHAT_ID = -1004400009713            # ID របស់ Channel / Group របស់បង
 # ---------------------------------------------
 
-# ទាញយក Database URL ពី Render Environment Variable
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-# មុខងារតភ្ជាប់ Cloud Database (PostgreSQL) ជាមួយ Error Handling
 def get_db_connection():
     if not DATABASE_URL:
         print("⚠️ Warning: DATABASE_URL environment variable is missing!")
@@ -57,7 +55,6 @@ def get_db_connection():
         print(f"❌ Database connection error: {e}")
         return None
 
-# រក្សាទុកកញ្ចប់ដែល User បានជ្រើសរើសបណ្តោះអាសន្ន និង Anti-Flood Cache
 user_selected_package = {}
 user_last_photo_time = {}
 
@@ -65,7 +62,7 @@ user_last_photo_time = {}
 def init_db():
     conn = get_db_connection()
     if conn is None:
-        print("⚠️ Skipping init_db because database connection failed. Bot will retry on request.")
+        print("⚠️ Skipping init_db because database connection failed.")
         return
     try:
         cursor = conn.cursor()
@@ -103,7 +100,7 @@ def init_db():
 
 init_db()
 
-# 3. ពាក្យបញ្ជា /start (ម៉ឺនុយមេសម្រាប់អតិថិជន)
+# 3. ពាក្យបញ្ជា /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
@@ -177,7 +174,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
-# 4. ដោះស្រាយពេលអតិថិជនចុច Package, Status, ឬ Referral Link
+# 4. ដោះស្រាយ Package, Status, Referral
 async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -265,13 +262,12 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await query.message.reply_text(f"{caption}\n\n(⚠️ រកមិនឃើញឯកសារ qr.jpg ឬ Custom QR ទេ)")
 
-# 5. ទទួលរូបភាពវិក្កយបត្រ (ការពារកុំឱ្យយល់ច្រឡំយក ៣០ថ្ងៃ និងទប់ស្កាត់ការប្រើ Slip ជាន់គ្នា)
+# 5. ទទួលរូបភាពវិក្កយបត្រ
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
     username = user.username or user.first_name
     
-    # ពិនិត្យមើលថាតើ User បានជ្រើសរើសកញ្ចប់ហើយឬនៅ
     if user_id not in user_selected_package:
         keyboard = [
             [InlineKeyboardButton("៥ ថ្ងៃ - ២ ដុល្លារ", callback_data="pkg_5")],
@@ -292,7 +288,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo_file = photo_obj.file_id
     photo_unique_id = photo_obj.file_unique_id
 
-    # Anti-Flood Protection
     now_ts = time.time()
     if user_id != ADMIN_ID:
         last_time = user_last_photo_time.get(user_id, 0)
@@ -301,7 +296,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         user_last_photo_time[user_id] = now_ts
     
-    # ពិនិត្យ Duplicate Slip
     conn = get_db_connection()
     if conn:
         try:
@@ -354,7 +348,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text("មានបញ្ហាក្នុងការផ្ញើរូបភាព សូមព្យាយាមម្តងទៀត។")
 
-# 6. ប្រព័ន្ធ Admin ចុច Approve, Reject ឬ Extend Days (កែប្រែឱ្យSaveចូល DB 100%)
+# 6. ប្រព័ន្ធ Admin ចុច Approve, Reject ឬ Extend
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query.from_user.id != ADMIN_ID:
@@ -369,7 +363,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = int(parts[1])
         days = int(parts[2])
         
-        # ស្រង់ឈ្មោះ User ចេញពី Caption សារដែលបានផ្ញើមក Admin
         user_display_name = "Customer"
         if query.message.caption:
             for line in query.message.caption.split("\n"):
@@ -393,7 +386,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         cursor.execute('INSERT INTO used_receipts (photo_file_id, user_id, used_at) VALUES (%s, %s, %s) ON CONFLICT (photo_file_id) DO NOTHING', 
                                        (photo_unique_id, user_id, get_now()))
                 
-                # INSERT ឬ UPDATE ដោយធានាថាទិន្នន័យចូលក្នុង DB ជានិច្ច
                 cursor.execute('''
                     INSERT INTO users (user_id, username, expiry_date, kicked, warned, package_info)
                     VALUES (%s, %s, %s, 0, 0, %s)
@@ -408,10 +400,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 conn.commit()
                 cursor.close()
                 conn.close()
+                print(f"✅ User {user_id} saved/updated in DB successfully!")
             except Exception as e:
-                print(f"Error approving user: {e}")
+                print(f"❌ Error approving user in DB: {e}")
         
-        # បង្កើត Auto-Join Invite Link
         try:
             invite_link = await context.bot.create_chat_invite_link(
                 chat_id=GROUP_CHAT_ID,
@@ -481,7 +473,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await query.edit_message_caption(caption=f"{query.message.caption}\n\n➕ [បានបន្ថែមថ្ងៃជោគជ័យ +{ext_days} ថ្ងៃ ប៉ុន្តែផ្ញើសារមិនទាន់ដល់ User]")
 
-# --- មុខងារ Admin Panel Command & Callbacks ---
+# --- Admin Panel Commands ---
 async def admin_panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -505,22 +497,7 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     data = query.data
     
     if data == "admin_stats":
-        active_users = expired_users = 0
-        conn = get_db_connection()
-        if conn:
-            try:
-                cursor = conn.cursor()
-                now_str = datetime.now(CAMBODIA_TZ).strftime('%Y-%m-%d %H:%M:%S')
-                cursor.execute("SELECT COUNT(*) FROM users WHERE expiry_date >= %s AND kicked = 0", (now_str,))
-                active_users = cursor.fetchone()[0]
-                cursor.execute("SELECT COUNT(*) FROM users WHERE expiry_date < %s", (now_str,))
-                expired_users = cursor.fetchone()[0]
-                cursor.close()
-                conn.close()
-            except Exception as e:
-                print(f"Error: {e}")
-        stats_text = f"📊 **ស្ថិតិប្រព័ន្ធសមាជិកភាព (Admin Dashboard)**\n\n🟢 សមាជិកសកម្ម (Active): **{active_users} នាក់**\n🔴 សមាជិកអស់សុពលភាព (Expired): **{expired_users} នាក់**"
-        await query.message.reply_text(stats_text, parse_mode="Markdown")
+        await stats(update, context)
         
     elif data == "admin_members_list":
         await admin_members(update, context)
@@ -538,7 +515,7 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         await query.message.reply_text(help_txt, parse_mode="Markdown")
 
-# --- មុខងារ Broadcast ---
+# Broadcast
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -574,7 +551,6 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"✅ Broadcast បានជោគជ័យ!\n- ជោគជ័យ: {success_count} នាក់\n- បរាជ័យ: {fail_count} នាក់")
 
-# --- មុខងារគ្រប់គ្រងសមាជិកផ្ទាល់ពី Admin ---
 async def adddays_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -646,7 +622,6 @@ async def kickuser_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {e}")
 
-# --- មុខងារកំណត់ ឬដូរ QR Code ទូទាត់ប្រាក់ ---
 async def setqr_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -670,7 +645,6 @@ async def setqr_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {e}")
 
-# --- មុខងារ Export ទិន្នន័យសមាជិកជា CSV ---
 async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -701,27 +675,39 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target_message = update.callback_query.message if update.callback_query else update.message
     await target_message.reply_document(document=bio, caption="📊 បញ្ជីទិន្នន័យសមាជិកទាំងអស់ក្នុងប្រព័ន្ធ (CSV Export)")
 
-# 9. ពាក្យបញ្ជា /stats
+# 9. stats (កែសម្រួលឱ្យអានទិន្នន័យបានត្រឹមត្រូវ ១០០%)
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
-        await update.message.reply_text(f"❌ អ្នកមិនមែនជា Admin ទេ! (User ID របស់អ្នកគឺ: `{user_id}`)", parse_mode="Markdown")
+        await update.message.reply_text(f"❌ អ្នកមិនមែនជា Admin ទេ!", parse_mode="Markdown")
         return
         
-    active_users = expired_users = 0
+    active_users = 0
+    expired_users = 0
     conn = get_db_connection()
     if conn:
         try:
             cursor = conn.cursor()
-            now_str = datetime.now(CAMBODIA_TZ).strftime('%Y-%m-%d %H:%M:%S')
-            cursor.execute("SELECT COUNT(*) FROM users WHERE expiry_date >= %s AND kicked = 0", (now_str,))
-            active_users = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM users WHERE expiry_date < %s", (now_str,))
-            expired_users = cursor.fetchone()[0]
-            
+            cursor.execute("SELECT expiry_date, kicked FROM users")
+            rows = cursor.fetchall()
             cursor.close()
             conn.close()
+            
+            now_dt = datetime.now(CAMBODIA_TZ)
+            for row in rows:
+                exp_str, kicked = row[0], row[1]
+                if kicked == 1:
+                    expired_users += 1
+                else:
+                    try:
+                        exp_date = datetime.strptime(exp_str, '%Y-%m-%d %H:%M:%S')
+                        exp_date = CAMBODIA_TZ.localize(exp_date) if exp_date.tzinfo is None else exp_date
+                        if now_dt < exp_date:
+                            active_users += 1
+                        else:
+                            expired_users += 1
+                    except Exception:
+                        expired_users += 1
         except Exception as e:
             print(f"Error fetching stats: {e}")
     
@@ -730,9 +716,10 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🟢 សមាជិកសកម្ម (Active): **{active_users} នាក់**\n"
         f"🔴 សមាជិកអស់សុពលភាព (Expired): **{expired_users} នាក់**"
     )
-    await update.message.reply_text(stats_text, parse_mode="Markdown")
+    target_message = update.callback_query.message if update.callback_query else update.message
+    await target_message.reply_text(stats_text, parse_mode="Markdown")
 
-# Admin មើលបញ្ជីសមាជិក (កែប្រែឱ្យបង្ហាញបញ្ជីបានត្រឹមត្រូវ ១០០%)
+# Admin មើលបញ្ជីសមាជិក (កែសម្រួលឱ្យអានទិន្នន័យបានត្រឹមត្រូវ ១០០%)
 async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -791,7 +778,7 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await target_message.reply_text(msg, parse_mode="Markdown")
 
-# 10. ពាក្យបញ្ជា /status (ឆែកស្ថានភាពសមាជិក)
+# 10. status
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     result = None
@@ -836,7 +823,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await target_message.reply_text("អ្នកមិនទាន់ជាសមាជិកទេ។ សូមផ្ញើពាក្យ /start ដើម្បីជ្រើសរើសកញ្ចប់សមាជិកភាព។")
 
-# 11. ដោះស្រាយពេល User ចុចប៊ូតុងបន្តសមាជិកភាព (Extend Menu)
+# 11. Extend Menu
 async def extend_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -850,7 +837,7 @@ async def extend_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("📦 សូមជ្រើសរើសកញ្ចប់សម្រាប់បន្តសមាជិកភាព (Extend)៖", reply_markup=reply_markup)
 
-# Auto-Kick Worker & Warning Check (ប្រើម៉ោងកម្ពុជា)
+# Auto-Kick
 def auto_kick_checker(application):
     while True:
         try:
