@@ -261,12 +261,29 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await query.message.reply_text(f"{caption}\n\n(⚠️ រកមិនឃើញឯកសារ qr.jpg ឬ Custom QR ទេ)")
 
-# 5. ទទួលរូបភាពវិក្កយបត្រ (ឆែក Duplicate Slip និងរង់ចាំ Admin Review ផ្ទាល់ ១០០%)
+# 5. ទទួលរូបភាពវិក្កយបត្រ (ការពារកុំឱ្យយល់ច្រឡំយក ៣០ថ្ងៃ និងឆែក Duplicate Slip)
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
     username = user.username or user.first_name
     
+    # ពិនិត្យមើលថាតើ User បានជ្រើសរើសកញ្ចប់ហើយឬនៅ (ការពារមិនឱ្យចាប់យក ៣០ថ្ងៃខុស)
+    if user_id not in user_selected_package:
+        keyboard = [
+            [InlineKeyboardButton("៥ ថ្ងៃ - ២ ដុល្លារ", callback_data="pkg_5")],
+            [InlineKeyboardButton("១០ ថ្ងៃ - ៣ ដុល្លារ", callback_data="pkg_10")],
+            [InlineKeyboardButton("២០ ថ្ងៃ - ៥ ដុល្លារ", callback_data="pkg_20")],
+            [InlineKeyboardButton("៣០ ថ្ងៃ - ៦ ដុល្លារ", callback_data="pkg_30")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            "⚠️ **សូមជ្រើសរើសកញ្ចប់សមាជិកភាពជាមុនសិន!**\n\n"
+            "អ្នកមិនទាន់បានជ្រើសរើសកញ្ចប់ទេ សូមចុចជ្រើសរើសកញ្ចប់ខាងក្រោម រួចค่อยផ្ញើរូបភាពវិក្កយបត្រ (Slip) មកម្តងទៀត៖",
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+        return
+
     photo_file = update.message.photo[-1].file_id
 
     # Anti-Flood Protection (យ៉ាងតិច ១០ វិនាទីម្តង)
@@ -293,7 +310,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"Error checking receipt: {e}")
         
-    days = user_selected_package.get(user_id, 30)
+    days = user_selected_package.get(user_id)
     prices = {5: "២ ដុល្លារ", 10: "៣ ដុល្លារ", 20: "៥ ដុល្លារ", 30: "៦ ដុល្លារ"}
     price_text = prices.get(days, "មិនស្គាល់តម្លៃ")
     package_desc = f"{days} ថ្ងៃ - {price_text}"
