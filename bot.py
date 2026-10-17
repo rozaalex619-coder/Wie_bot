@@ -2,7 +2,10 @@ import threading
 import psycopg2
 import time
 import os
+import io
+import csv
 from datetime import datetime, timedelta
+import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, 
@@ -15,12 +18,18 @@ from telegram.ext import (
 )
 from flask import Flask
 
+# កំណត់ Timezone ឱ្យត្រូវនឹងប្រទេសកម្ពុជា (Asia/Phnom_Penh)
+CAMBODIA_TZ = pytz.timezone('Asia/Phnom_Penh')
+
+def get_now():
+    return datetime.now(CAMBODIA_TZ).strftime('%Y-%m-%d %H:%M:%S')
+
 # 1. ផ្នែក Flask សម្រាប់រក្សាឱ្យ Bot រត់បានយូរលើ Render
 app_web = Flask(__name__)
 
 @app_web.route("/")
 def home():
-    return "Subscription Bot with Cloud PostgreSQL & Join Request Handler is running!"
+    return "Subscription Bot with Cloud PostgreSQL & Advanced Admin Features is running!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -49,10 +58,11 @@ def get_db_connection():
         print(f"❌ Database connection error: {e}")
         return None
 
-# រក្សាទុកកញ្ចប់ដែល User បានជ្រើសរើសបណ្តោះអាសន្ន
+# រក្សាទុកកញ្ចប់ដែល User បានជ្រើសរើសបណ្តោះអាសន្ន និង Anti-Flood Cache
 user_selected_package = {}
+user_last_photo_time = {}
 
-# 2. បង្កើត Database Tables លើ Cloud PostgreSQL
+# 2. បង្កើត Database Tables លើ Cloud PostgreSQL (រួមទាំង Table សម្រាប់เก็บ Dynamic QR Code)
 def init_db():
     conn = get_db_connection()
     if conn is None:
@@ -77,6 +87,12 @@ def init_db():
                 photo_file_id TEXT PRIMARY KEY,
                 user_id BIGINT,
                 used_at TEXT
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS bot_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
             )
         ''')
         conn.commit()
@@ -111,8 +127,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cursor.execute('SELECT expiry_date FROM users WHERE user_id = %s', (user_id,))
             result = cursor.fetchone()
             
+            now_dt = datetime.now(CAMBODIA_TZ)
             if not result:
-                default_expiry = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
+                default_expiry = (now_dt - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
                 
                 if referrer_id:
                     cursor.execute('SELECT expiry_date FROM users WHERE user_id = %s', (referrer_id,))
@@ -120,8 +137,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if ref_res:
                         try:
                             ref_exp = datetime.strptime(ref_res[0], '%Y-%m-%d %H:%M:%S')
-                            now = datetime.now()
-                            base_time = ref_exp if ref_exp > now else now
+                            ref_exp = CAMBODIA_TZ.localize(ref_exp) if ref_exp.tzinfo is None else ref_exp
+                            base_time = ref_exp if ref_exp > now_dt else now_dt
                             new_ref_exp = (base_time + timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
                             cursor.execute('UPDATE users SET expiry_date = %s WHERE user_id = %s', (new_ref_exp, referrer_id))
                             await context.bot.send_message(chat_id=referrer_id, text="🎁 មានមិត្តភក្តិបានចូលប្រើប្រាស់ Bot តាមរយៈ Link របស់អ្នក! អ្នកទទួលបានការថែមជូន **១ម៉ោង** ដោយស្វ័យប្រវត្តិ។")
@@ -188,18 +205,49 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🤖 (ប្រព័ន្ធនឹងត្រួតពិនិត្យវិក្កយបត្រដោយស្វ័យប្រវត្តិក្នុងរយៈពេល ២-៣ នាទី ឬ Admin នឹងអនុម័តផ្ទាល់!)"
         )
         
-        try:
-            await query.message.reply_photo(photo=open('qr.jpg', 'rb'), caption=caption, parse_mode="Markdown")
-        except Exception:
-            await query.message.reply_text(f"{caption}\n\n(⚠️ រកមិនឃើញឯកសារ qr.jpg ក្នុង GitHub ទេ)")
+        # មុខងារ Dynamic QR Code: ឆែកមើលថាតើ Admin ធ្លាប់ផ្ញើ QR ថ្មីមកទុករួចហើយឬនៅ
+        conn = get_db_connection()
+        custom_qr_file_id = None
+        if conn:
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT value FROM bot_settings WHERE key = 'custom_qr_file_id'")
+                res = cur.fetchone()
+                if res:
+                    custom_qr_file_id = res[0]
+                cur.close()
+                conn.close()
+            except Exception:
+                pass
 
-# 5. ទទួលរូបភាពវិក្កយបត្រ និង Background Auto-Verify Task
+        try:
+            if custom_qr_file_id:
+                await query.message.reply_photo(photo=custom_qr_file_id, caption=caption, parse_mode="Markdown")
+            else:
+                await query.message.reply_photo(photo=open('qr.jpg', 'rb'), caption=caption, parse_mode="Markdown")
+        except Exception:
+            await query.message.reply_text(f"{caption}\n\n(⚠️ រកមិនឃើញឯកសារ qr.jpg ឬ Custom QR ទេ)")
+
+# 5. ទទួលរូបភាពវិក្កយបត្រ (រួមបញ្ចូលប្រព័ន្ធ Anti-Flood & Dynamic QR Setting ពេល Admin ផ្ញើរូប)
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
     username = user.username or user.first_name
     
     photo_file = update.message.photo[-1].file_id
+
+    # មុខងារ Dynamic QR Code: បើ Admin ផ្ញើរូបភាពមកចំពេល Bot ទទួល Admin photo អាចយកមកទុកជា QR Code ថ្មី (តាម command ឬកត់ត្រា)
+    if user_id == ADMIN_ID and context.args:
+        pass # រក្សាការងារធម្មតា
+
+    # 4. ប្រព័ន្ធការពារ Spanning / Anti-Flood លើការផ្ញើរូបភាព (កំណត់យ៉ាងតិច ១០ វិនាទីម្តង)
+    now_ts = time.time()
+    if user_id != ADMIN_ID:
+        last_time = user_last_photo_time.get(user_id, 0)
+        if now_ts - last_time < 10:
+            await update.message.reply_text("⚠️ សូមកុំផ្ញើរូបភាពញាប់ពេក! សូមរង់ចាំបន្តិចសិន។")
+            return
+        user_last_photo_time[user_id] = now_ts
     
     conn = get_db_connection()
     if conn:
@@ -268,9 +316,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 c.close()
                 return
             
-            expiry = (datetime.now() + timedelta(days=target_days)).strftime('%Y-%m-%d %H:%M:%S')
+            expiry = (datetime.now(CAMBODIA_TZ) + timedelta(days=target_days)).strftime('%Y-%m-%d %H:%M:%S')
             cur.execute('INSERT INTO used_receipts (photo_file_id, user_id, used_at) VALUES (%s, %s, %s) ON CONFLICT (photo_file_id) DO NOTHING', 
-                           (photo_id, target_user_id, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+                           (photo_id, target_user_id, get_now()))
             cur.execute('''
                 UPDATE users SET expiry_date = %s, kicked = 0, warned = 0, package_info = %s WHERE user_id = %s
             ''', (expiry, target_package_desc, target_user_id))
@@ -278,7 +326,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cur.close()
             c.close()
 
-            # បង្កើត Single-Use Join Request Link ផ្ញើជូនអតិថិជនពេល Auto-Verify
             async def send_auto_link():
                 try:
                     invite_link = await app_context.bot.create_chat_invite_link(
@@ -329,7 +376,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = int(parts[1])
         days = int(parts[2])
         
-        expiry = (datetime.now() + timedelta(days=days)).strftime('%Y-%m-%d %H:%M:%S')
+        expiry = (datetime.now(CAMBODIA_TZ) + timedelta(days=days)).strftime('%Y-%m-%d %H:%M:%S')
         prices = {5: "២ ដុល្លារ", 10: "៣ ដុល្លារ", 20: "៥ ដុល្លារ", 30: "៦ ដុល្លារ"}
         price_text = prices.get(days, "មិនស្គាល់តម្លៃ")
         package_desc = f"{days} ថ្ងៃ - {price_text}"
@@ -342,7 +389,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     photo_file = query.message.photo[-1].file_id if hasattr(query.message, 'photo') else None
                     if photo_file:
                         cursor.execute('INSERT INTO used_receipts (photo_file_id, user_id, used_at) VALUES (%s, %s, %s) ON CONFLICT (photo_file_id) DO NOTHING', 
-                                       (photo_file, user_id, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+                                       (photo_file, user_id, get_now()))
                 
                 cursor.execute('''
                     UPDATE users SET expiry_date = %s, kicked = 0, warned = 0, package_info = %s WHERE user_id = %s
@@ -360,7 +407,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 print(f"Error approving user: {e}")
         
-        # បង្កើត Single-Use Join Request Link ផ្ញើជូនអតិថិជនពេល Admin ចុច Approve
         try:
             invite_link = await context.bot.create_chat_invite_link(
                 chat_id=GROUP_CHAT_ID,
@@ -375,7 +421,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             success_message = (
                 f"🎉 អបអរសាទរ! ការទូទាត់របស់អ្នកត្រូវបាន Admin យល់ព្រមហើយ។\n\n"
                 f"🔗 តំណភ្ជាប់ចូលគ្រុប (Group Link):\n{custom_link}\n\n"
-                f"📅 សមាជិកភាពមានសុពលភាពចំនួន {days} ថ្ងៃ ដល់ថ្ងៃ៖ {expiry}\n"
+                f"📅 សមាជិកភាពมีសុពលភាពចំនួន {days} ថ្ងៃ ដល់ថ្ងៃ៖ {expiry}\n"
                 f"ពិនិត្យថ្ងៃខែនៅសល់ដោយប្រើពាក្យបញ្ជា /status"
             )
             await context.bot.send_message(chat_id=user_id, text=success_message)
@@ -397,20 +443,20 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ext_days = int(parts[2])
         
         conn = get_db_connection()
-        new_expiry = (datetime.now() + timedelta(days=ext_days)).strftime('%Y-%m-%d %H:%M:%S')
         if conn:
             try:
                 cursor = conn.cursor()
                 cursor.execute('SELECT expiry_date, package_info FROM users WHERE user_id = %s', (user_id,))
                 res = cursor.fetchone()
                 
-                now = datetime.now()
+                now_dt = datetime.now(CAMBODIA_TZ)
                 if res and res[0]:
                     current_expiry = datetime.strptime(res[0], '%Y-%m-%d %H:%M:%S')
-                    base_time = current_expiry if current_expiry > now else now
+                    current_expiry = CAMBODIA_TZ.localize(current_expiry) if current_expiry.tzinfo is None else current_expiry
+                    base_time = current_expiry if current_expiry > now_dt else now_dt
                     old_pkg = res[1] if res[1] else "មិនមាន"
                 else:
-                    base_time = now
+                    base_time = now_dt
                     old_pkg = "មិនមាន"
                     
                 new_expiry = (base_time + timedelta(days=ext_days)).strftime('%Y-%m-%d %H:%M:%S')
@@ -431,13 +477,174 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await query.edit_message_caption(caption=f"{query.message.caption}\n\n➕ [បានបន្ថែមថ្ងៃជោគជ័យ +{ext_days} ថ្ងៃ ប៉ុន្តែផ្ញើសារមិនទាន់ដល់ User]")
 
-# 7. មុខងារទទួល Join Request ពេលអតិថិជនចុច Link (លោតមក Admin ផ្ទាល់)
+# --- [បន្ថែមថ្មី 1]: មុខងារ Broadcast (ផ្ញើសារជូនដំណឹងទៅសមាជិកទាំងអស់) ---
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    text_to_broadcast = " ".join(context.args)
+    if not text_to_broadcast:
+        await update.message.reply_text("⚠️ សូមសរសេរសារដែលចង់ Broadcast ផង។ ឧទាហរណ៍៖ `/broadcast សួស្តីសមាជិកទាំងអស់...`", parse_mode="Markdown")
+        return
+
+    conn = get_db_connection()
+    if not conn:
+        await update.message.reply_text("❌ មានបញ្ហា Database។")
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT user_id FROM users")
+        all_users = cur.fetchall()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
+        return
+
+    success_count = 0
+    fail_count = 0
+    for row in all_users:
+        u_id = row[0]
+        try:
+            await context.bot.send_message(chat_id=u_id, text=f"📢 **សេចក្តីប្រកាសជូនដំណឹង៖**\n\n{text_to_broadcast}", parse_mode="Markdown")
+            success_count += 1
+            time.sleep(0.1) # ป้องกัน Telegram Flood Limit
+        except Exception:
+            fail_count += 1
+
+    await update.message.reply_text(f"✅ Broadcast បានជោគជ័យ!\n- ជោគជ័យ: {success_count} នាក់\n- បរាជ័យ: {fail_count} នាក់")
+
+# --- [បន្ថែមថ្មី 2]: មុខងារគ្រប់គ្រងសមាជិកផ្ទាល់ពី Admin (Manual Add/Remove/Check User) ---
+async def adddays_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    args = context.args
+    if len(args) < 2:
+        await update.message.reply_text("⚠️ ង់ប្រើប្រាស់ខុសទម្រង់! ប្រើ៖ `/adddays <user_id> <days>`", parse_mode="Markdown")
+        return
+    try:
+        target_user_id = int(args[0])
+        add_d = int(args[1])
+    except ValueError:
+        await update.message.reply_text("❌ User ID និង Days ត្រូវតែជាតួលេខ។")
+        return
+
+    conn = get_db_connection()
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT expiry_date, package_info FROM users WHERE user_id = %s", (target_user_id,))
+        res = cur.fetchone()
+        now_dt = datetime.now(CAMBODIA_TZ)
+        if res and res[0]:
+            cur_exp = datetime.strptime(res[0], '%Y-%m-%d %H:%M:%S')
+            cur_exp = CAMBODIA_TZ.localize(cur_exp) if cur_exp.tzinfo is None else cur_exp
+            base = cur_exp if cur_exp > now_dt else now_dt
+            old_pkg = res[1] or "Manual"
+        else:
+            base = now_dt
+            old_pkg = "Manual"
+
+        new_exp = (base + timedelta(days=add_d)).strftime('%Y-%m-%d %H:%M:%S')
+        new_pkg = f"{old_pkg} + Admin បន្ថែម {add_d}ថ្ងៃ"
+
+        cur.execute("INSERT INTO users (user_id, username, expiry_date, kicked, package_info) VALUES (%s, %s, %s, 0, %s) ON CONFLICT (user_id) DO UPDATE SET expiry_date = %s, kicked = 0, package_info = %s",
+                    (target_user_id, "User", new_exp, new_pkg, new_exp, new_pkg))
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        await update.message.reply_text(f"✅ បានបន្ថែមថ្ងៃសមាជិកភាពចំនួន {add_d} ថ្ងៃ ដល់ User ID: `{target_user_id}` ជោគជ័យ!\nផុតកំណត់ថ្ងៃ៖ {new_exp}", parse_mode="Markdown")
+        try:
+            await context.bot.send_message(chat_id=target_user_id, text=f"✨ Admin បានបន្ថែមថ្ងៃសមាជិកភាពឱ្យអ្នកចំនួន {add_d} ថ្ងៃ! ផុតកំណត់ថ្ងៃ៖ {new_exp}")
+        except Exception:
+            pass
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
+
+async def kickuser_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    args = context.args
+    if not args:
+        await update.message.reply_text("⚠️ ប្រើប្រាស់៖ `/kickuser <user_id>`", parse_mode="Markdown")
+        return
+    try:
+        target_user_id = int(args[0])
+        await context.bot.ban_chat_member(chat_id=GROUP_CHAT_ID, user_id=target_user_id)
+        await context.bot.unban_chat_member(chat_id=GROUP_CHAT_ID, user_id=target_user_id)
+        
+        conn = get_db_connection()
+        if conn:
+            cur = conn.cursor()
+            cur.execute("UPDATE users SET kicked = 1 WHERE user_id = %s", (target_user_id,))
+            conn.commit()
+            cur.close()
+            conn.close()
+        await update.message.reply_text(f"✅ បានទាត់ User ID `{target_user_id}` ចេញពីគ្រុប និង Update DB រួចរាល់។", parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
+
+# --- [បន្ថែមថ្មី 3]: មុខងារកំណត់ ឬដូរ QR Code ទូទាត់ប្រាក់ពីក្នុង Telegram (Dynamic QR Code) ---
+async def setqr_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    reply = update.message.reply_to_message
+    if not reply or not reply.photo:
+        await update.message.reply_text("⚠️ សូម Reply (ឆ្លើយតប) ទៅកាន់រូបភាព QR Code ថ្មី ជាមួយពាក្យ `/setqr`", parse_mode="Markdown")
+        return
+    
+    new_photo_file_id = reply.photo[-1].file_id
+    conn = get_db_connection()
+    if not conn:
+        await update.message.reply_text("❌ Database error.")
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute("INSERT INTO bot_settings (key, value) VALUES ('custom_qr_file_id', %s) ON CONFLICT (key) DO UPDATE SET value = %s", (new_photo_file_id, new_photo_file_id))
+        conn.commit()
+        cur.close()
+        conn.close()
+        await update.message.reply_text("✅ បានប្តូរ QR Code ថ្មីសម្រាប់ទូទាត់ប្រាក់ដោយជោគជ័យ!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
+
+# --- [បន្ថែមថ្មី 6]: មុខងារ Export ទិន្នន័យសមាជិកជា CSV / Excel ---
+async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    conn = get_db_connection()
+    if not conn:
+        await update.message.reply_text("❌ Database error.")
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT user_id, username, expiry_date, kicked, warned, package_info FROM users")
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
+        return
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["User ID", "Username", "Expiry Date", "Kicked", "Warned", "Package Info"])
+    for r in rows:
+        writer.writerow(r)
+    
+    output.seek(0)
+    bio = io.BytesIO(output.getvalue().encode('utf-8'))
+    bio.name = "members_data.csv"
+    
+    await update.message.reply_document(document=bio, caption="📊 បញ្ជីទិន្នន័យសមាជិកទាំងអស់ក្នុងប្រព័ន្ធ (CSV Export)")
+
+# 7. មុខងារទទួល Join Request ពេលអតិថិជនចុច Link
 async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     req = update.chat_join_request
     user = req.from_user
     chat = req.chat
     
-    # បង្កើតប៊ូតុង Approve / Decline ឱ្យ Admin ចុចផ្ទាល់
     keyboard = [
         [
             InlineKeyboardButton("✅ យល់ព្រមចូល (Approve)", callback_data=f"accept_req_{chat.id}_{user.id}"),
@@ -448,7 +655,7 @@ async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     
     msg_text = (
         f"📩 **មានអតិថិជនស្នើសុំចូល Channel/Group!**\n\n"
-        f"👤 ឈ្មោះ: {user.first_name} (@{user.username or 'ไม่มี username'})\n"
+        f"👤 ឈ្មោះ: {user.first_name} (@{user.username or 'គ្មាន username'})\n"
         f"🆔 User ID: `{user.id}`\n"
         f"📍 គ្រុប/ឆានែល: {chat.title}\n\n"
         f"សូមចុចសម្រេចចិត្តខាងក្រោម៖"
@@ -469,7 +676,7 @@ async def join_request_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
     data = query.data
     parts = data.split("_")
-    action = parts[0] # accept ឬ decline
+    action = parts[0]
     chat_id = int(parts[2])
     target_user_id = int(parts[3])
     
@@ -497,10 +704,11 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if conn:
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM users WHERE expiry_date >= TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS') AND kicked = 0")
+            now_str = datetime.now(CAMBODIA_TZ).strftime('%Y-%m-%d %H:%M:%S')
+            cursor.execute("SELECT COUNT(*) FROM users WHERE expiry_date >= %s AND kicked = 0", (now_str,))
             active_users = cursor.fetchone()[0]
             
-            cursor.execute("SELECT COUNT(*) FROM users WHERE expiry_date < TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')")
+            cursor.execute("SELECT COUNT(*) FROM users WHERE expiry_date < %s", (now_str,))
             expired_users = cursor.fetchone()[0]
             
             cursor.close()
@@ -539,7 +747,7 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     msg = "📋 **បញ្ជីឈ្មោះ កញ្ចប់ តម្លៃ និងថ្ងៃផុតកំណត់សមាជិកទាំងអស់៖**\n\n"
-    now = datetime.now()
+    now_dt = datetime.now(CAMBODIA_TZ)
     
     for row in rows:
         u_id, uname, exp_str, kicked, package_info = row
@@ -552,8 +760,9 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             try:
                 exp_date = datetime.strptime(exp_str, '%Y-%m-%d %H:%M:%S')
-                if now < exp_date:
-                    rem = exp_date - now
+                exp_date = CAMBODIA_TZ.localize(exp_date) if exp_date.tzinfo is None else exp_date
+                if now_dt < exp_date:
+                    rem = exp_date - now_dt
                     days = rem.days
                     hours = rem.seconds // 3600
                     status_text = f"🟢 សកម្ម (សល់ {days} ថ្ងៃ និង {hours} ម៉ោង) | ផុតកំណត់៖ {exp_str}"
@@ -588,8 +797,11 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if result:
         expiry_str = result[0]
         expiry_date = datetime.strptime(expiry_str, '%Y-%m-%d %H:%M:%S')
-        if datetime.now() < expiry_date:
-            remaining = expiry_date - datetime.now()
+        expiry_date = CAMBODIA_TZ.localize(expiry_date) if expiry_date.tzinfo is None else expiry_date
+        now_dt = datetime.now(CAMBODIA_TZ)
+
+        if now_dt < expiry_date:
+            remaining = expiry_date - now_dt
             days = remaining.days
             hours = remaining.seconds // 3600
             
@@ -624,16 +836,17 @@ async def extend_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("📦 សូមជ្រើសរើសកញ្ចប់សម្រាប់ต่ออายุ (Extend)៖", reply_markup=reply_markup)
 
-# Auto-Kick Worker & Warning Check
+# Auto-Kick Worker & Warning Check (ប្រើម៉ោងកម្ពុជា)
 def auto_kick_checker(application):
     while True:
         try:
             conn = get_db_connection()
             if conn:
                 cursor = conn.cursor()
-                now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                now_dt = datetime.now(CAMBODIA_TZ)
+                now_str = now_dt.strftime('%Y-%m-%d %H:%M:%S')
+                soon_str = (now_dt + timedelta(hours=24)).strftime('%Y-%m-%d %H:%M:%S')
                 
-                soon_str = (datetime.now() + timedelta(hours=24)).strftime('%Y-%m-%d %H:%M:%S')
                 cursor.execute('SELECT user_id FROM users WHERE expiry_date <= %s AND expiry_date > %s AND warned = 0 AND kicked = 0', (soon_str, now_str))
                 warn_users = cursor.fetchall()
                 
@@ -692,22 +905,32 @@ if __name__ == "__main__":
         
     application = ApplicationBuilder().token(BOT_TOKEN).build()
     
+    # Commands
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("status", status))
     application.add_handler(CommandHandler("stats", stats))
     application.add_handler(CommandHandler("admin_members", admin_members))
+    
+    # Commands ใหม่ (Admin Extended Features)
+    application.add_handler(CommandHandler("broadcast", broadcast_command))
+    application.add_handler(CommandHandler("adddays", adddays_command))
+    application.add_handler(CommandHandler("kickuser", kickuser_command))
+    application.add_handler(CommandHandler("setqr", setqr_command))
+    application.add_handler(CommandHandler("export", export_command))
+
+    # Handlers
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(CallbackQueryHandler(button_callback, pattern="^(approve_|reject_|ext_)"))
     application.add_handler(CallbackQueryHandler(join_request_callback, pattern="^(accept_req_|decline_req_)"))
     application.add_handler(CallbackQueryHandler(package_callback, pattern="^(pkg_|get_referral_link)"))
     application.add_handler(CallbackQueryHandler(extend_menu_callback, pattern="^extend_menu$"))
     
-    # Handler សម្រាប់ចាប់យករាល់ពេលមានអតិថិជនចុច Request ចូល Channel
+    # Chat Join Request Handler
     application.add_handler(ChatJoinRequestHandler(join_request_handler))
     
     application.add_error_handler(error_handler)
     
     threading.Thread(target=auto_kick_checker, args=(application,), daemon=True).start()
     
-    print("Subscription Bot with Cloud PostgreSQL is starting...")
+    print("Subscription Bot with Cloud PostgreSQL & Advanced Features is starting...")
     application.run_polling()
