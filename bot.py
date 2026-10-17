@@ -38,7 +38,7 @@ threading.Thread(target=run_web, daemon=True).start()
 
 # --- ការកំណត់សំខាន់ៗ ---
 ADMIN_ID = 8980369344                      
-GROUP_INVITE_LINK = "Https://t.me/+OUYrG0SGcYdiNDBl"  # Link សម្រាប់ Admin ប្រើប្រាស់ផ្ទាល់
+GROUP_INVITE_LINK = "https://t.me/+0hzxqMCnB1o1OTY1"  # Link សម្រាប់ Admin ប្រើប្រាស់ផ្ទាល់
 GROUP_CHAT_ID = -1004400009713            # ID របស់ Channel / Group របស់បង
 # ---------------------------------------------
 
