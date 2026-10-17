@@ -38,7 +38,7 @@ threading.Thread(target=run_web, daemon=True).start()
 
 # --- ការកំណត់សំខាន់ៗ ---
 ADMIN_ID = 8980369344                      
-GROUP_INVITE_LINK = "https://t.me/+0hzxqMCnB1o1OTY1"  # Link សម្រាប់ Admin ប្រើប្រាស់ផ្ទាល់
+GROUP_INVITE_LINK = "https://t.me/+0hzxqMCnB1o1OTY1"  # Link បម្រុងសម្រាប់ Admin ប្រើប្រាស់ផ្ទាល់
 GROUP_CHAT_ID = -1004400009713            # ID របស់ Channel / Group របស់បង
 # ---------------------------------------------
 
@@ -262,7 +262,7 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await query.message.reply_text(f"{caption}\n\n(⚠️ រកមិនឃើញឯកសារ qr.jpg ឬ Custom QR ទេ)")
 
-# 5. ទទួលរូបភាពវិក្កយបត្រ
+# 5. ទទួលរូបភាពវិក្កយបត្រ និងទប់ស្កាត់ Slip ក្លែងក្លាយ
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
@@ -348,7 +348,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text("មានបញ្ហាក្នុងការផ្ញើរូបភាព សូមព្យាយាមម្តងទៀត។")
 
-# 6. ប្រព័ន្ធ Admin ចុច Approve, Reject ឬ Extend
+# 6. ប្រព័ន្ធ Admin ចុច Approve, Reject ឬ Extend (ជាមួយ One-Time Dynamic Invite Link)
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query.from_user.id != ADMIN_ID:
@@ -404,10 +404,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 print(f"❌ Error approving user in DB: {e}")
         
+        # បង្កើត Link ពិសេសសម្រាប់តែម្នាក់គត់ (One-Time Link ដែរកំណត់ member_limit=1) និងផ្ដល់សិទ្ធិការពារការ Forward ទៅជនទី ២
         try:
             invite_link = await context.bot.create_chat_invite_link(
                 chat_id=GROUP_CHAT_ID,
-                member_limit=1
+                member_limit=1,
+                creates_join_request=False
             )
             custom_link = invite_link.invite_link
         except Exception:
@@ -416,12 +418,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             success_message = (
                 f"🎉 អបអរសាទរ! ការទូទាត់របស់អ្នកត្រូវបាន Admin យល់ព្រមហើយ។\n\n"
-                f"🔗 តំណភ្ជាប់ចូលគ្រុប (Group Link):\n{custom_link}\n\n"
+                f"🔗 តំណភ្ជាប់ចូលគ្រុបផ្ទាល់ខ្លួនរបស់អ្នក (សម្រាប់តែអ្នកម្នាក់គត់ មិនអាច Forward ឱ្យអ្នកផ្សេងបានទេ)៖\n{custom_link}\n\n"
                 f"📅 សមាជិកភាពមានសុពលភាពចំនួន {days} ថ្ងៃ ដល់ថ្ងៃ៖ {expiry}\n"
                 f"ពិនិត្យថ្ងៃខែនៅសល់ដោយប្រើពាក្យបញ្ជា /status"
             )
             await context.bot.send_message(chat_id=user_id, text=success_message)
-            await query.edit_message_caption(caption=f"{query.message.caption}\n\n✅ [បានអនុម័តជោគជ័យ {days} ថ្ងៃ និងផ្ញើ Auto-Join Link ជូនរួចរាល់]")
+            await query.edit_message_caption(caption=f"{query.message.caption}\n\n✅ [បានអនុម័តជោគជ័យ {days} ថ្ងៃ និងបង្កើត Single-Use Link ជូនរួចរាល់]")
         except Exception as e:
             await query.edit_message_caption(caption=f"{query.message.caption}\n\n⚠️ អនុម័តរួច ប៉ុន្តែមានបញ្ហាក្នុងការផ្ញើសារទៅ User")
             
@@ -472,6 +474,57 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_caption(caption=f"{query.message.caption}\n\n➕ [បានបន្ថែមថ្ងៃជោគជ័យ +{ext_days} ថ្ងៃ]")
         except Exception:
             await query.edit_message_caption(caption=f"{query.message.caption}\n\n➕ [បានបន្ថែមថ្ងៃជោគជ័យ +{ext_days} ថ្ងៃ ប៉ុន្តែផ្ញើសារមិនទាន់ដល់ User]")
+
+# 7. មុខងារទប់ស្កាត់ជនទី២ ចូលគ្រុបដោយគ្មានឈ្មោះក្នុង Database (Anti-Fraud Security Check ពេលមានសមាជិកថ្មីចូលគ្រុប)
+async def track_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    result = update.chat_member
+    if not result:
+        return
+    
+    chat = result.chat
+    if chat.id != GROUP_CHAT_ID:
+        return
+
+    new_member = result.new_chat_member
+    if new_member.status in ["member", "restricted"]:
+        user_id = new_member.user.id
+        
+        # រំលង Admin
+        if user_id == ADMIN_ID:
+            return
+            
+        conn = get_db_connection()
+        is_authorized = False
+        if conn:
+            try:
+                cursor = conn.cursor()
+                cursor.execute('SELECT expiry_date, kicked FROM users WHERE user_id = %s', (user_id,))
+                res = cursor.fetchone()
+                cursor.close()
+                conn.close()
+                
+                if res:
+                    expiry_str, kicked = res[0], res[1]
+                    exp_date = datetime.strptime(expiry_str, '%Y-%m-%d %H:%M:%S')
+                    exp_date = CAMBODIA_TZ.localize(exp_date) if exp_date.tzinfo is None else exp_date
+                    now_dt = datetime.now(CAMBODIA_TZ)
+                    
+                    if kicked == 0 and now_dt < exp_date:
+                        is_authorized = True
+            except Exception as e:
+                print(f"Error checking member authorization: {e}")
+                
+        # បើគ្មានសិទ្ធិ ឬគ្មានឈ្មោះក្នុង Database (ឧ. លួចយក Link ពីគេមកចូល) Bot នឹងទាត់ចេញភ្លាមៗ
+        if not is_authorized:
+            try:
+                await context.bot.ban_chat_member(chat_id=GROUP_CHAT_ID, user_id=user_id)
+                await context.bot.unban_chat_member(chat_id=GROUP_CHAT_ID, user_id=user_id)
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text="❌ **សូមអភ័យទោស!** គណនីរបស់អ្នកមិនមានសិទ្ធិ ឬមិនបានទិញកញ្ចប់សមាជិកភាពទេ (ឬ Link នេះត្រូវបានគេយកមកចែករំលែកខុសច្បាប់)។ ប្រព័ន្ធបានទាត់អ្នកចេញពីគ្រុបដោយស្វ័យប្រវត្តិ។"
+                )
+            except Exception as e:
+                print(f"Error kicking unauthorized user {user_id}: {e}")
 
 # --- Admin Panel Commands ---
 async def admin_panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -675,7 +728,7 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target_message = update.callback_query.message if update.callback_query else update.message
     await target_message.reply_document(document=bio, caption="📊 បញ្ជីទិន្នន័យសមាជិកទាំងអស់ក្នុងប្រព័ន្ធ (CSV Export)")
 
-# 9. stats (កែសម្រួលឱ្យអានទិន្នន័យបានត្រឹមត្រូវ ១០០%)
+# 8. stats (ស្ថិតិប្រព័ន្ធ)
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -719,7 +772,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target_message = update.callback_query.message if update.callback_query else update.message
     await target_message.reply_text(stats_text, parse_mode="Markdown")
 
-# Admin មើលបញ្ជីសមាជិក (កែសម្រួលឱ្យអានទិន្នន័យបានត្រឹមត្រូវ ១០០%)
+# Admin មើលបញ្ជីសមាជិក
 async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -778,7 +831,7 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await target_message.reply_text(msg, parse_mode="Markdown")
 
-# 10. status
+# 9. status
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     result = None
@@ -823,7 +876,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await target_message.reply_text("អ្នកមិនទាន់ជាសមាជិកទេ។ សូមផ្ញើពាក្យ /start ដើម្បីជ្រើសរើសកញ្ចប់សមាជិកភាព។")
 
-# 11. Extend Menu
+# 10. Extend Menu
 async def extend_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -837,7 +890,7 @@ async def extend_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("📦 សូមជ្រើសរើសកញ្ចប់សម្រាប់បន្តសមាជិកភាព (Extend)៖", reply_markup=reply_markup)
 
-# Auto-Kick
+# Auto-Kick & Expiry Checker (ទាត់អតិថិជនចេញដោយស្វ័យប្រវត្តិពេលផុតកំណត់ថ្ងៃ)
 def auto_kick_checker(application):
     while True:
         try:
@@ -924,6 +977,7 @@ if __name__ == "__main__":
 
     # Handlers
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    application.add_handler(ChatMemberHandler(track_chat_member, ChatMemberHandler.CHAT_MEMBER)) # ទប់ស្កាត់ជនទី២ ចូលដោយគ្មានសិទ្ធិ
     application.add_handler(CallbackQueryHandler(button_callback, pattern="^(approve_|reject_|ext_)"))
     application.add_handler(CallbackQueryHandler(admin_panel_callback, pattern="^admin_"))
     application.add_handler(CallbackQueryHandler(package_callback, pattern="^(pkg_|get_referral_link|user_)"))
