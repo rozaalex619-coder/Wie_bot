@@ -62,7 +62,7 @@ def get_db_connection():
 user_selected_package = {}
 user_last_photo_time = {}
 
-# 2. បង្កើត Database Tables លើ Cloud PostgreSQL (រួមទាំង Table សម្រាប់เก็บ Dynamic QR Code)
+# 2. បង្កើត Database Tables លើ Cloud PostgreSQL
 def init_db():
     conn = get_db_connection()
     if conn is None:
@@ -202,10 +202,9 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📦 អ្នកបានជ្រើសរើសកញ្ចប់៖ **{days} ថ្ងៃ** (តម្លៃ: **{price_text}**)\n\n"
             f"💳 ១. សូម Scan QR Code ខាងលើដើម្បីទូទាត់ប្រាក់។\n"
             f"📸 ២. បន្ទាប់ពីបង់ប្រាក់រួច សូមថតរូបវិក្កយបត្រ (Screenshot) ហើយផ្ញើរូបភាពនោះចូលមកកាន់ Bot នេះផ្ទាល់។\n\n"
-            f"🤖 (ប្រព័ន្ធនឹងត្រួតពិនិត្យវិក្កយបត្រដោយស្វ័យប្រវត្តិក្នុងរយៈពេល ២-៣ នាទី ឬ Admin នឹងអនុម័តផ្ទាល់!)"
+            f"🤖 (វិក្កយបត្ររបស់អ្នកនឹងត្រូវផ្ញើទៅកាន់ Admin ពិនិត្យ និងអនុម័តជូន!)"
         )
         
-        # មុខងារ Dynamic QR Code: ឆែកមើលថាតើ Admin ធ្លាប់ផ្ញើ QR ថ្មីមកទុករួចហើយឬនៅ
         conn = get_db_connection()
         custom_qr_file_id = None
         if conn:
@@ -228,7 +227,7 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await query.message.reply_text(f"{caption}\n\n(⚠️ រកមិនឃើញឯកសារ qr.jpg ឬ Custom QR ទេ)")
 
-# 5. ទទួលរូបភាពវិក្កយបត្រ (រួមបញ្ចូលប្រព័ន្ធ Anti-Flood & Dynamic QR Setting ពេល Admin ផ្ញើរូប)
+# 5. ទទួលរូបភាពវិក្កយបត្រ (ឆែក Duplicate Slip និងរង់ចាំ Admin Review ផ្ទាល់ ១០០%)
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
@@ -236,11 +235,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     photo_file = update.message.photo[-1].file_id
 
-    # មុខងារ Dynamic QR Code: បើ Admin ផ្ញើរូបភាពមកចំពេល Bot ទទួល Admin photo អាចយកមកទុកជា QR Code ថ្មី (តាម command ឬកត់ត្រា)
-    if user_id == ADMIN_ID and context.args:
-        pass # រក្សាការងារធម្មតា
-
-    # 4. ប្រព័ន្ធការពារ Spanning / Anti-Flood លើការផ្ញើរូបភាព (កំណត់យ៉ាងតិច ១០ វិនាទីម្តង)
+    # Anti-Flood Protection លើការផ្ញើរូបភាព (យ៉ាងតិច ១០ វិនាទីម្តង)
     now_ts = time.time()
     if user_id != ADMIN_ID:
         last_time = user_last_photo_time.get(user_id, 0)
@@ -249,6 +244,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         user_last_photo_time[user_id] = now_ts
     
+    # មុខងារការពារ៖ ពិនិត្យមើលថាតើ Slip នេះធ្លាប់បានប្រើប្រាស់រួចហើយឬនៅ (Duplicate Receipt Check)
     conn = get_db_connection()
     if conn:
         try:
@@ -258,7 +254,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cursor.close()
             conn.close()
             if receipt_check:
-                await update.message.reply_text("❌ វិក្កយបត្រ (Screenshot) នេះត្រូវបានប្រើប្រាស់រួចរាល់ហើយ! សូមកុំយកវិក្កយបត្ររបស់អ្នកដទៃមកផ្ញើម្តងទៀត។")
+                await update.message.reply_text("❌ **វិក្កយបត្រ (Slip) ນີ້ត្រូវបានប្រើប្រាស់រួចរាល់ហើយ!**\nប្រព័ន្ធបានរកឃើញថាវិក្កយបត្រនេះធ្លាប់ត្រូវបានបញ្ជូនម្តងរួចមកហើយ សូមកុំយកវិក្កយបត្រចាស់មកផ្ញើសារម្តងទៀត។")
                 return
         except Exception as e:
             print(f"Error checking receipt: {e}")
@@ -281,87 +277,27 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     admin_caption = (
-        f"🔔 **មានអតិថិជនស្នើសុំចូលសមាជិក!**\n\n"
+        f"🔔 **មានអតិថិជនស្នើសុំចូលសមាជិក! (New Receipt)**\n\n"
         f"👤 ឈ្មោះ: {username}\n"
         f"🆔 User ID: `{user_id}`\n"
         f"ជម្រើសកញ្ចប់: **{package_desc}**\n"
         f"🖼 Photo ID: `{photo_file}`\n\n"
-        f"⏳ (Bot កំពុងរង់ចាំ Admin ពិនិត្យ ២ នាទី បើមិនទាន់ឆ្លើយតប Bot នឹង Auto-Approve ឱ្យដោយស្វ័យប្រវត្តិ)"
+        f"⏳ (ប្រព័ន្ធបានផ្ទៀងផ្ទាត់ថាជា Slip ថ្មី មិនទាន់មានក្នុង Database ទេ។ សូម Admin ពិនិត្យ និងចុចសម្រេចចិត្តខាងក្រោម)"
     )
     
-    sent_message = None
     try:
-        sent_message = await context.bot.send_photo(
+        await context.bot.send_photo(
             chat_id=ADMIN_ID,
             photo=photo_file,
             caption=admin_caption,
             reply_markup=reply_markup,
             parse_mode="Markdown"
         )
-        await update.message.reply_text("📥 វិក្កយបត្ររបស់អ្នកត្រូវបានបញ្ជូនហើយ! Bot កំពុងផ្ទៀងផ្ទាត់ដោយស្វ័យប្រវត្តិក្នុងរយៈពេលបន្តិចទៀតនេះ...")
+        await update.message.reply_text("📥 វិក្កយបត្ររបស់អ្នកត្រូវបានបញ្ជូនរួចរាល់ហើយ! សូមរង់ចាំ Admin ពិនិត្យ និងអនុម័តជូនក្នុងពេលបន្តិចទៀតនេះ...")
     except Exception as e:
         await update.message.reply_text("មានបញ្ហាក្នុងការផ្ញើរូបភាព សូមព្យាយាមម្តងទៀត។")
-        return
 
-    def auto_verify_worker(app_context, target_user_id, target_days, target_package_desc, msg_chat_id, msg_id, photo_id):
-        time.sleep(150)
-        try:
-            c = get_db_connection()
-            if not c:
-                return
-            cur = c.cursor()
-            cur.execute('SELECT user_id FROM used_receipts WHERE photo_file_id = %s', (photo_id,))
-            if cur.fetchone():
-                cur.close()
-                c.close()
-                return
-            
-            expiry = (datetime.now(CAMBODIA_TZ) + timedelta(days=target_days)).strftime('%Y-%m-%d %H:%M:%S')
-            cur.execute('INSERT INTO used_receipts (photo_file_id, user_id, used_at) VALUES (%s, %s, %s) ON CONFLICT (photo_file_id) DO NOTHING', 
-                           (photo_id, target_user_id, get_now()))
-            cur.execute('''
-                UPDATE users SET expiry_date = %s, kicked = 0, warned = 0, package_info = %s WHERE user_id = %s
-            ''', (expiry, target_package_desc, target_user_id))
-            c.commit()
-            cur.close()
-            c.close()
-
-            async def send_auto_link():
-                try:
-                    invite_link = await app_context.bot.create_chat_invite_link(
-                        chat_id=GROUP_CHAT_ID,
-                        creates_join_request=True,
-                        member_limit=1
-                    )
-                    custom_link = invite_link.invite_link
-                except Exception:
-                    custom_link = GROUP_INVITE_LINK
-
-                success_message = (
-                    f"🎉 អបអរសាទរ! វិក្កយបត្ររបស់អ្នកត្រូវបានផ្ទៀងផ្ទាត់ជោគជ័យដោយស្វ័យប្រវត្តិ (Auto-Verified)។\n\n"
-                    f"🔗 តំណភ្ជាប់ចូលគ្រុប (Group Link):\n{custom_link}\n\n"
-                    f"📅 សមាជិកភាពមានសុពលភាព {target_days} ថ្ងៃ ដល់ថ្ងៃ៖ {expiry}\n"
-                    f"ពិនិត្យថ្ងៃខែនៅសល់ដោយប្រើពាក្យបញ្ជា /status"
-                )
-                await app_context.bot.send_message(chat_id=target_user_id, text=success_message)
-
-            import asyncio
-            asyncio.run_coroutine_threadsafe(send_auto_link(), app_context.bot.loop)
-            
-            try:
-                app_context.bot.edit_message_caption(
-                    chat_id=msg_chat_id,
-                    message_id=msg_id,
-                    caption=f"🔔 [Auto-Approved ស្វ័យប្រវត្តិដោយ Bot ក្រោយ ២នាទី]\n\n📅 កញ្ចប់: {target_package_desc}"
-                )
-            except Exception:
-                pass
-        except Exception as e:
-            print(f"Error in auto_verify_worker: {e}")
-
-    threading.Thread(target=auto_verify_worker, args=(context, user_id, days, package_desc, ADMIN_ID, sent_message.message_id, photo_file), daemon=True).start()
-
-# 6. ប្រព័ន្ធ Admin ចុច Approve, Reject ឬ Extend Days
+# 6. ប្រព័ន្ធ Admin ចុច Approve, Reject ឬ Extend Days (កត់ត្រា Slip ចូល used_receipts ពេល Approve)
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query.from_user.id != ADMIN_ID:
@@ -388,6 +324,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if query.message.photo:
                     photo_file = query.message.photo[-1].file_id if hasattr(query.message, 'photo') else None
                     if photo_file:
+                        # កត់ត្រាទុកថា Slip នេះត្រូវបានប្រើប្រាស់រួចហើយ (ការពារការយកមកប្រើម្តងទៀត)
                         cursor.execute('INSERT INTO used_receipts (photo_file_id, user_id, used_at) VALUES (%s, %s, %s) ON CONFLICT (photo_file_id) DO NOTHING', 
                                        (photo_file, user_id, get_now()))
                 
@@ -421,7 +358,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             success_message = (
                 f"🎉 អបអរសាទរ! ការទូទាត់របស់អ្នកត្រូវបាន Admin យល់ព្រមហើយ។\n\n"
                 f"🔗 តំណភ្ជាប់ចូលគ្រុប (Group Link):\n{custom_link}\n\n"
-                f"📅 សមាជិកភាពมีសុពលភាពចំនួន {days} ថ្ងៃ ដល់ថ្ងៃ៖ {expiry}\n"
+                f"📅 សមាជិកភាពមានសុពលភាពចំនួន {days} ថ្ងៃ ដល់ថ្ងៃ៖ {expiry}\n"
                 f"ពិនិត្យថ្ងៃខែនៅសល់ដោយប្រើពាក្យបញ្ជា /status"
             )
             await context.bot.send_message(chat_id=user_id, text=success_message)
@@ -477,7 +414,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await query.edit_message_caption(caption=f"{query.message.caption}\n\n➕ [បានបន្ថែមថ្ងៃជោគជ័យ +{ext_days} ថ្ងៃ ប៉ុន្តែផ្ញើសារមិនទាន់ដល់ User]")
 
-# --- [បន្ថែមថ្មី 1]: មុខងារ Broadcast (ផ្ញើសារជូនដំណឹងទៅសមាជិកទាំងអស់) ---
+# --- មុខងារ Broadcast (ផ្ញើសារជូនដំណឹងទៅសមាជិកទាំងអស់) ---
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -507,19 +444,19 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(chat_id=u_id, text=f"📢 **សេចក្តីប្រកាសជូនដំណឹង៖**\n\n{text_to_broadcast}", parse_mode="Markdown")
             success_count += 1
-            time.sleep(0.1) # ป้องกัน Telegram Flood Limit
+            time.sleep(0.1)
         except Exception:
             fail_count += 1
 
     await update.message.reply_text(f"✅ Broadcast បានជោគជ័យ!\n- ជោគជ័យ: {success_count} នាក់\n- បរាជ័យ: {fail_count} នាក់")
 
-# --- [បន្ថែមថ្មី 2]: មុខងារគ្រប់គ្រងសមាជិកផ្ទាល់ពី Admin (Manual Add/Remove/Check User) ---
+# --- មុខងារគ្រប់គ្រងសមាជិកផ្ទាល់ពី Admin (Manual Add/Remove User) ---
 async def adddays_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     args = context.args
     if len(args) < 2:
-        await update.message.reply_text("⚠️ ង់ប្រើប្រាស់ខុសទម្រង់! ប្រើ៖ `/adddays <user_id> <days>`", parse_mode="Markdown")
+        await update.message.reply_text("⚠️ ប្រើប្រាស់៖ `/adddays <user_id> <days>`", parse_mode="Markdown")
         return
     try:
         target_user_id = int(args[0])
@@ -585,7 +522,7 @@ async def kickuser_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {e}")
 
-# --- [បន្ថែមថ្មី 3]: មុខងារកំណត់ ឬដូរ QR Code ទូទាត់ប្រាក់ពីក្នុង Telegram (Dynamic QR Code) ---
+# --- មុខងារកំណត់ ឬដូរ QR Code ទូទាត់ប្រាក់ពីក្នុង Telegram (Dynamic QR Code) ---
 async def setqr_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -609,7 +546,7 @@ async def setqr_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {e}")
 
-# --- [បន្ថែមថ្មី 6]: មុខងារ Export ទិន្នន័យសមាជិកជា CSV / Excel ---
+# --- មុខងារ Export ទិន្នន័យសមាជិកជា CSV ---
 async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -911,7 +848,7 @@ if __name__ == "__main__":
     application.add_handler(CommandHandler("stats", stats))
     application.add_handler(CommandHandler("admin_members", admin_members))
     
-    # Commands ใหม่ (Admin Extended Features)
+    # Extended Commands
     application.add_handler(CommandHandler("broadcast", broadcast_command))
     application.add_handler(CommandHandler("adddays", adddays_command))
     application.add_handler(CommandHandler("kickuser", kickuser_command))
@@ -932,5 +869,5 @@ if __name__ == "__main__":
     
     threading.Thread(target=auto_kick_checker, args=(application,), daemon=True).start()
     
-    print("Subscription Bot with Cloud PostgreSQL & Advanced Features is starting...")
+    print("Subscription Bot with Cloud PostgreSQL & Duplicate Receipt Guard is starting...")
     application.run_polling()
