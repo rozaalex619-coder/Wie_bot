@@ -44,7 +44,7 @@ def get_db_connection():
 # រក្សាទុកកញ្ចប់ដែល User បានជ្រើសរើសបណ្តោះអាសន្ន
 user_selected_package = {}
 
-# 2. បង្កើត Database Tables លើ Cloud PostgreSQL (លុប free_claimed ចោល)
+# 2. បង្កើត Database Tables លើ Cloud PostgreSQL
 def init_db():
     conn = get_db_connection()
     if conn is None:
@@ -80,7 +80,7 @@ def init_db():
 
 init_db()
 
-# 3. ពាក្យបញ្ជា /start (รองรับ Referral Link ថែមម៉ោង)
+# 3. ពាក្យបញ្ជា /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
@@ -106,7 +106,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not result:
                 default_expiry = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
                 
-                # បើមានคนแนะนำ ឱ្យโบนัสเพิ่ม ១ម៉ោង (1 hour) ដល់ผู้แนะนำ
                 if referrer_id:
                     cursor.execute('SELECT expiry_date FROM users WHERE user_id = %s', (referrer_id,))
                     ref_res = cursor.fetchone()
@@ -132,7 +131,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"Error in start query: {e}")
     
-    # គ្មានប៊ូតុង Free Trial ទៀតទេ មានតែកញ្ចប់បង់ប្រាក់ និងប៊ូតុង Referral
     keyboard = [
         [InlineKeyboardButton("៥ ថ្ងៃ - ២ ដុល្លារ", callback_data="pkg_5")],
         [InlineKeyboardButton("១០ ថ្ងៃ - ៣ ដុល្លារ", callback_data="pkg_10")],
@@ -163,7 +161,7 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             f"🔗 **តំណភ្ជាប់ណែនាំមិត្តភក្តិ (Referral Link) របស់អ្នក៖**\n\n"
             f"`{ref_link}`\n\n"
-            f"💡 **អត្ថប្រយោជន៍៖** ពេលมีមិត្តភក្តិចុចចូលតាម Link នេះ អ្នកនឹងទទួលបានការថែមជូន **១ម៉ោង** ចូលក្នុងសមាជិកភាពរបស់អ្នកដោយស្វ័យប្រវត្តិ!",
+            f"💡 **អត្ថប្រយោជន៍៖** ពេលមានមិត្តភក្តិចុចចូលតាម Link នេះ អ្នកនឹងទទួលបានការថែមជូន **១ម៉ោង** ចូលក្នុងសមាជិកភាពរបស់អ្នកដោយស្វ័យប្រវត្តិ!",
             parse_mode="Markdown"
         )
         return
@@ -179,7 +177,7 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📦 អ្នកបានជ្រើសរើសកញ្ចប់៖ **{days} ថ្ងៃ** (តម្លៃ: **{price_text}**)\n\n"
             f"💳 ១. សូម Scan QR Code ខាងលើដើម្បីទូទាត់ប្រាក់។\n"
             f"📸 ២. បន្ទាប់ពីបង់ប្រាក់រួច សូមថតរូបវិក្កយបត្រ (Screenshot) ហើយផ្ញើរូបភាពនោះចូលមកកាន់ Bot នេះផ្ទាល់។\n\n"
-            f"🤖 (ប្រព័ន្ធจะត្រួតពិនិត្យវិក្កយបត្រដោយស្វ័យប្រវត្តិក្នុងរយៈពេល ២-៣ នាទី ឬ Admin នឹងអនុម័តផ្ទាល់!)"
+            f"🤖 (ប្រព័ន្ធនឹងត្រួតពិនិត្យវិក្កយបត្រដោយស្វ័យប្រវត្តិក្នុងរយៈពេល ២-៣ នាទី ឬ Admin នឹងអនុម័តផ្ទាល់!)"
         )
         
         try:
@@ -272,13 +270,28 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cur.close()
             c.close()
 
-            success_message = (
-                f"🎉 អបអរសាទរ! វិក្កយបត្ររបស់អ្នកត្រូវបានផ្ទៀងផ្ទាត់ជោគជ័យដោយស្វ័យប្រវត្តិ (Auto-Verified)។\n\n"
-                f"🔗 តំណភ្ជាប់ចូលគ្រុប (Group Link):\n{GROUP_INVITE_LINK}\n\n"
-                f"📅 សមាជិកភាពมีសុពលភាព {target_days} ថ្ងៃ ដល់ថ្ងៃ៖ {expiry}\n"
-                f"ពិនិត្យថ្ងៃខែនៅសល់ដោយប្រើពាក្យបញ្ជា /status"
-            )
-            app_context.bot.send_message(chat_id=target_user_id, text=success_message)
+            # បង្កើត Single-Use Join Request Invite Link ដោយស្វ័យប្រវត្តិពេល Auto-Approve
+            async def send_auto_link():
+                try:
+                    invite_link = await app_context.bot.create_chat_invite_link(
+                        chat_id=GROUP_CHAT_ID,
+                        creates_join_request=True,
+                        member_limit=1
+                    )
+                    custom_link = invite_link.invite_link
+                except Exception:
+                    custom_link = GROUP_INVITE_LINK
+
+                success_message = (
+                    f"🎉 អបអរសាទរ! ការទូទាត់របស់អ្នកត្រូវបានផ្ទៀងផ្ទាត់ជោគជ័យដោយស្វ័យប្រវត្តិ (Auto-Verified)។\n\n"
+                    f"🔗 តំណភ្ជាប់ចូលគ្រុប (Group Link):\n{custom_link}\n\n"
+                    f"📅 សមាជិកភាពមានសុពលភាព {target_days} ថ្ងៃ ដល់ថ្ងៃ៖ {expiry}\n"
+                    f"ពិនិត្យថ្ងៃខែនៅសល់ដោយប្រើពាក្យបញ្ជា /status"
+                )
+                await app_context.bot.send_message(chat_id=target_user_id, text=success_message)
+
+            import asyncio
+            asyncio.run_coroutine_threadsafe(send_auto_link(), app_context.bot.loop)
             
             try:
                 app_context.bot.edit_message_caption(
@@ -339,10 +352,21 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 print(f"Error approving user: {e}")
         
+        # បង្កើត Single-Use Join Request Invite Link ថ្មីសម្រាប់អតិថិជនម្នាក់នេះ
+        try:
+            invite_link = await context.bot.create_chat_invite_link(
+                chat_id=GROUP_CHAT_ID,
+                creates_join_request=True,
+                member_limit=1
+            )
+            custom_link = invite_link.invite_link
+        except Exception:
+            custom_link = GROUP_INVITE_LINK
+        
         try:
             success_message = (
                 f"🎉 អបអរសាទរ! ការទូទាត់របស់អ្នកត្រូវបាន Admin យល់ព្រមហើយ។\n\n"
-                f"🔗 តំណភ្ជាប់ចូលគ្រុប (Group Link):\n{GROUP_INVITE_LINK}\n\n"
+                f"🔗 តំណភ្ជាប់ចូលគ្រុប (Group Link):\n{custom_link}\n\n"
                 f"📅 សមាជិកភាពមានសុពលភាពចំនួន {days} ថ្ងៃ ដល់ថ្ងៃ៖ {expiry}\n"
                 f"ពិនិត្យថ្ងៃខែនៅសល់ដោយប្រើពាក្យបញ្ជា /status"
             )
@@ -399,7 +423,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await query.edit_message_caption(caption=f"{query.message.caption}\n\n➕ [បានបន្ថែមថ្ងៃជោគជ័យ +{ext_days} ថ្ងៃ ប៉ុន្តែផ្ញើសារមិនទាន់ដល់ User]")
 
-# 7. ពាក្យបញ្ជា /stats (លុប Free Trial stats ចោល)
+# 7. ពាក្យបញ្ជា /stats
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -579,7 +603,7 @@ def auto_kick_checker(application):
                         reply_markup = InlineKeyboardMarkup(keyboard)
                         application.bot.send_message(
                             chat_id=user_id, 
-                            text="⏰ សមាជិកភាពរបស់អ្នកបានផុតកំណត់ហើយ! Bot បានទាត់អ្នកចេញពីគ្រុបដោយស្វ័យប្រវត្តិ。\n\n👉 សូមចុចប៊ូតុងខាងក្រោមដើម្បីបង់ប្រាក់ទិញកញ្ចប់សមាជិកភាពថ្មី។",
+                            text="⏰ សមាជិកភាពរបស់អ្នកបានផុតកំណត់ហើយ! Bot បានទាត់អ្នកចេញពីគ្រុបដោយស្វ័យប្រវត្តិ។\n\n👉 សូមចុចប៊ូតុងខាងក្រោមដើម្បីបង់ប្រាក់ទិញកញ្ចប់សមាជិកភាពថ្មី។",
                             reply_markup=reply_markup
                         )
                     except Exception as e:
