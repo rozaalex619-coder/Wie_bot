@@ -7,7 +7,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 from flask import Flask
 
-# 1. ផ្នែក Flask សម្រាប់រក្សាឱ្យ Bot រត់បានយូរលើ Render (ប្រើ os.environ.get("PORT"))
+# 1. ផ្នែក Flask សម្រាប់រក្សាឱ្យ Bot រត់បានយូរលើ Render
 app_web = Flask(__name__)
 
 @app_web.route("/")
@@ -29,10 +29,17 @@ GROUP_CHAT_ID = -1001234567890
 # ទាញយក Database URL ពី Render Environment Variable
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-# មុខងារតភ្ជាប់ Cloud Database (PostgreSQL)
+# មុខងារតភ្ជាប់ Cloud Database (PostgreSQL) ជាមួយ Error Handling
 def get_db_connection():
-    conn = psycopg2.connect(DATABASE_URL, sslmode='require')
-    return conn
+    if not DATABASE_URL:
+        print("⚠️ Warning: DATABASE_URL environment variable is missing!")
+        return None
+    try:
+        conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+        return conn
+    except Exception as e:
+        print(f"❌ Database connection error: {e}")
+        return None
 
 # រក្សាទុកកញ្ចប់ដែល User បានជ្រើសរើសបណ្តោះអាសន្ន
 user_selected_package = {}
@@ -40,28 +47,35 @@ user_selected_package = {}
 # 2. បង្កើត Database Tables លើ Cloud PostgreSQL
 def init_db():
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            user_id BIGINT PRIMARY KEY,
-            username TEXT,
-            expiry_date TEXT,
-            kicked INTEGER DEFAULT 0,
-            free_claimed INTEGER DEFAULT 0,
-            warned INTEGER DEFAULT 0,
-            package_info TEXT DEFAULT 'មិនមាន'
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS used_receipts (
-            photo_file_id TEXT PRIMARY KEY,
-            user_id BIGINT,
-            used_at TEXT
-        )
-    ''')
-    conn.commit()
-    cursor.close()
-    conn.close()
+    if conn is None:
+        print("⚠️ Skipping init_db because database connection failed. Bot will retry on request.")
+        return
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id BIGINT PRIMARY KEY,
+                username TEXT,
+                expiry_date TEXT,
+                kicked INTEGER DEFAULT 0,
+                free_claimed INTEGER DEFAULT 0,
+                warned INTEGER DEFAULT 0,
+                package_info TEXT DEFAULT 'មិនមាន'
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS used_receipts (
+                photo_file_id TEXT PRIMARY KEY,
+                user_id BIGINT,
+                used_at TEXT
+            )
+        ''')
+        conn.commit()
+        cursor.close()
+        conn.close()
+        print("✅ Database initialized successfully!")
+    except Exception as e:
+        print(f"❌ Database initialization error: {e}")
 
 init_db()
 
@@ -72,22 +86,27 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = user.username or user.first_name
     
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT free_claimed, expiry_date FROM users WHERE user_id = %s', (user_id,))
-    result = cursor.fetchone()
-    
-    if not result:
-        default_expiry = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
-        cursor.execute('''
-            INSERT INTO users (user_id, username, expiry_date, kicked, free_claimed, warned, package_info)
-            VALUES (%s, %s, %s, 0, 0, 0, 'មិនទាន់ជ្រើសរើសកញ្ចប់')
-        ''', (user_id, username, default_expiry))
-        conn.commit()
-    
-    cursor.execute('SELECT free_claimed FROM users WHERE user_id = %s', (user_id,))
-    result = cursor.fetchone()
-    cursor.close()
-    conn.close()
+    result = None
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute('SELECT free_claimed, expiry_date FROM users WHERE user_id = %s', (user_id,))
+            result = cursor.fetchone()
+            
+            if not result:
+                default_expiry = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
+                cursor.execute('''
+                    INSERT INTO users (user_id, username, expiry_date, kicked, free_claimed, warned, package_info)
+                    VALUES (%s, %s, %s, 0, 0, 0, 'មិនទាន់ជ្រើសរើសកញ្ចប់')
+                ''', (user_id, username, default_expiry))
+                conn.commit()
+            
+            cursor.execute('SELECT free_claimed FROM users WHERE user_id = %s', (user_id,))
+            result = cursor.fetchone()
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            print(f"Error in start query: {e}")
     
     keyboard = []
     if not result or result[0] == 0:
@@ -118,26 +137,35 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data == "claim_free":
         conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT free_claimed FROM users WHERE user_id = %s', (user_id,))
-        result = cursor.fetchone()
-        
-        if result and result[0] == 1:
-            cursor.close()
-            conn.close()
-            await query.message.reply_text("❌ អ្នកបានប្រើប្រាស់សិទ្ធិសាកល្បងអស់ចំនួន ១ ថ្ងៃរួចរាល់ហើយ! (មិនអាចយកម្តងទៀតបានទេ)")
+        if not conn:
+            await query.message.reply_text("⚠️ មានបញ្ហាក្នុងការតភ្ជាប់ Database សូមព្យាយាមម្តងទៀត។")
             return
             
-        expiry = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
-        username = query.from_user.username or query.from_user.first_name
-        package_desc = "១ ថ្ងៃ - 0 ដុល្លារ (Free Trial)"
-        
-        cursor.execute('''
-            UPDATE users SET username = %s, expiry_date = %s, kicked = 0, free_claimed = 1, warned = 0, package_info = %s WHERE user_id = %s
-        ''', (username, expiry, package_desc, user_id))
-        conn.commit()
-        cursor.close()
-        conn.close()
+        try:
+            cursor = conn.cursor()
+            cursor.execute('SELECT free_claimed FROM users WHERE user_id = %s', (user_id,))
+            result = cursor.fetchone()
+            
+            if result and result[0] == 1:
+                cursor.close()
+                conn.close()
+                await query.message.reply_text("❌ អ្នកបានប្រើប្រាស់សិទ្ធិសាកល្បងអស់ចំនួន ១ ថ្ងៃរួចរាល់ហើយ! (មិនអាចយកម្តងទៀតបានទេ)")
+                return
+                
+            expiry = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
+            username = query.from_user.username or query.from_user.first_name
+            package_desc = "១ ថ្ងៃ - 0 ដុល្លារ (Free Trial)"
+            
+            cursor.execute('''
+                UPDATE users SET username = %s, expiry_date = %s, kicked = 0, free_claimed = 1, warned = 0, package_info = %s WHERE user_id = %s
+            ''', (username, expiry, package_desc, user_id))
+            conn.commit()
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            print(f"Error in claim_free: {e}")
+            await query.message.reply_text("⚠️ មានបញ្ហាក្នុងការរក្សាទុកទិន្នន័យ។")
+            return
         
         success_message = (
             f"🎉 អបអរសាទរ! អ្នកទទួលបានសិទ្ធិសាកល្បងចំនួន ១ ថ្ងៃជោគជ័យ។\n\n"
@@ -175,15 +203,18 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo_file = update.message.photo[-1].file_id
     
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT user_id FROM used_receipts WHERE photo_file_id = %s', (photo_file,))
-    receipt_check = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    
-    if receipt_check:
-        await update.message.reply_text("❌ វិក្កយបត្រ (Screenshot) នេះត្រូវបានប្រើប្រាស់រួចរាល់ហើយ! សូមកុំយកវិក្កយបត្ររបស់អ្នកដទៃមកផ្ញើម្តងទៀត។")
-        return
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute('SELECT user_id FROM used_receipts WHERE photo_file_id = %s', (photo_file,))
+            receipt_check = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            if receipt_check:
+                await update.message.reply_text("❌ វិក្កយបត្រ (Screenshot) នេះត្រូវបានប្រើប្រាស់រួចរាល់ហើយ! សូមកុំយកវិក្កយបត្ររបស់អ្នកដទៃមកផ្ញើម្តងទៀត។")
+                return
+        except Exception as e:
+            print(f"Error checking receipt: {e}")
         
     days = user_selected_package.get(user_id, 30)
     prices = {5: "២ ដុល្លារ", 10: "៣ ដុល្លារ", 20: "៥ ដុល្លារ", 30: "៦ ដុល្លារ"}
@@ -244,27 +275,30 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         package_desc = f"{days} ថ្ងៃ - {price_text}"
         
         conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        if query.message.photo:
-            photo_file = query.message.photo[-1].file_id if hasattr(query.message, 'photo') else None
-            if photo_file:
-                cursor.execute('INSERT INTO used_receipts (photo_file_id, user_id, used_at) VALUES (%s, %s, %s) ON CONFLICT (photo_file_id) DO NOTHING', 
-                               (photo_file, user_id, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-        
-        cursor.execute('''
-            UPDATE users SET expiry_date = %s, kicked = 0, warned = 0, package_info = %s WHERE user_id = %s
-        ''', (expiry, package_desc, user_id))
-        
-        if cursor.rowcount == 0:
-            cursor.execute('''
-                INSERT INTO users (user_id, username, expiry_date, kicked, free_claimed, warned, package_info) 
-                VALUES (%s, %s, %s, %s, %s, 0, %s)
-            ''', (user_id, "Customer", expiry, 0, 1, package_desc))
-            
-        conn.commit()
-        cursor.close()
-        conn.close()
+        if conn:
+            try:
+                cursor = conn.cursor()
+                if query.message.photo:
+                    photo_file = query.message.photo[-1].file_id if hasattr(query.message, 'photo') else None
+                    if photo_file:
+                        cursor.execute('INSERT INTO used_receipts (photo_file_id, user_id, used_at) VALUES (%s, %s, %s) ON CONFLICT (photo_file_id) DO NOTHING', 
+                                       (photo_file, user_id, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+                
+                cursor.execute('''
+                    UPDATE users SET expiry_date = %s, kicked = 0, warned = 0, package_info = %s WHERE user_id = %s
+                ''', (expiry, package_desc, user_id))
+                
+                if cursor.rowcount == 0:
+                    cursor.execute('''
+                        INSERT INTO users (user_id, username, expiry_date, kicked, free_claimed, warned, package_info) 
+                        VALUES (%s, %s, %s, %s, %s, 0, %s)
+                    ''', (user_id, "Customer", expiry, 0, 1, package_desc))
+                    
+                conn.commit()
+                cursor.close()
+                conn.close()
+            except Exception as e:
+                print(f"Error approving user: {e}")
         
         try:
             success_message = (
@@ -292,28 +326,33 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ext_days = int(parts[2])
         
         conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT expiry_date, package_info FROM users WHERE user_id = %s', (user_id,))
-        res = cursor.fetchone()
-        
-        now = datetime.now()
-        if res and res[0]:
-            current_expiry = datetime.strptime(res[0], '%Y-%m-%d %H:%M:%S')
-            base_time = current_expiry if current_expiry > now else now
-            old_pkg = res[1] if res[1] else "មិនមាន"
-        else:
-            base_time = now
-            old_pkg = "មិនមាន"
-            
-        new_expiry = (base_time + timedelta(days=ext_days)).strftime('%Y-%m-%d %H:%M:%S')
-        new_pkg = f"{old_pkg} + បន្ថែម {ext_days}ថ្ងៃ"
-        
-        cursor.execute('''
-            UPDATE users SET expiry_date = %s, kicked = 0, package_info = %s WHERE user_id = %s
-        ''', (new_expiry, new_pkg, user_id))
-        conn.commit()
-        cursor.close()
-        conn.close()
+        new_expiry = (datetime.now() + timedelta(days=ext_days)).strftime('%Y-%m-%d %H:%M:%S')
+        if conn:
+            try:
+                cursor = conn.cursor()
+                cursor.execute('SELECT expiry_date, package_info FROM users WHERE user_id = %s', (user_id,))
+                res = cursor.fetchone()
+                
+                now = datetime.now()
+                if res and res[0]:
+                    current_expiry = datetime.strptime(res[0], '%Y-%m-%d %H:%M:%S')
+                    base_time = current_expiry if current_expiry > now else now
+                    old_pkg = res[1] if res[1] else "មិនមាន"
+                else:
+                    base_time = now
+                    old_pkg = "មិនមាន"
+                    
+                new_expiry = (base_time + timedelta(days=ext_days)).strftime('%Y-%m-%d %H:%M:%S')
+                new_pkg = f"{old_pkg} + បន្ថែម {ext_days}ថ្ងៃ"
+                
+                cursor.execute('''
+                    UPDATE users SET expiry_date = %s, kicked = 0, package_info = %s WHERE user_id = %s
+                ''', (new_expiry, new_pkg, user_id))
+                conn.commit()
+                cursor.close()
+                conn.close()
+            except Exception as e:
+                print(f"Error extending days: {e}")
         
         try:
             await context.bot.send_message(chat_id=user_id, text=f"✨ Admin បានបន្ថែមថ្ងៃសមាជិកភាពឱ្យអ្នកចំនួន {ext_days} ថ្ងៃបន្ថែមទៀត! ផុតកំណត់ថ្ងៃ៖ {new_expiry}")
@@ -328,20 +367,24 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ អ្នកមិនមែនជា Admin ទេ! (User ID របស់អ្នកគឺ: `{user_id}`)", parse_mode="Markdown")
         return
         
+    active_users = expired_users = free_users = 0
     conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT COUNT(*) FROM users WHERE expiry_date >= TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS') AND kicked = 0")
-    active_users = cursor.fetchone()[0]
-    
-    cursor.execute("SELECT COUNT(*) FROM users WHERE expiry_date < TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')")
-    expired_users = cursor.fetchone()[0]
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM users WHERE expiry_date >= TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS') AND kicked = 0")
+            active_users = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT COUNT(*) FROM users WHERE expiry_date < TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')")
+            expired_users = cursor.fetchone()[0]
 
-    cursor.execute("SELECT COUNT(*) FROM users WHERE free_claimed = 1")
-    free_users = cursor.fetchone()[0]
-    
-    cursor.close()
-    conn.close()
+            cursor.execute("SELECT COUNT(*) FROM users WHERE free_claimed = 1")
+            free_users = cursor.fetchone()[0]
+            
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            print(f"Error fetching stats: {e}")
     
     stats_text = (
         f"📊 **ស្ថិតិប្រព័ន្ធសមាជិកភាព (Admin Dashboard)**\n\n"
@@ -358,12 +401,17 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ អ្នកមិនមែនជា Admin ទេ! (User ID របស់អ្នកគឺ: `{user_id}`)", parse_mode="Markdown")
         return
         
+    rows = []
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT user_id, username, expiry_date, kicked, free_claimed, package_info FROM users')
-    rows = cursor.fetchall()
-    cursor.close()
-    conn.close()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute('SELECT user_id, username, expiry_date, kicked, free_claimed, package_info FROM users')
+            rows = cursor.fetchall()
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            print(f"Error fetching admin_members: {e}")
     
     if not rows:
         await update.message.reply_text("📭 មិនទាន់មានទិន្នន័យសមាជិកនៅក្នុងប្រព័ន្ធទេ។")
@@ -404,12 +452,17 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ពាក្យបញ្ជា /status
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    result = None
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT expiry_date FROM users WHERE user_id = %s', (user_id,))
-    result = cursor.fetchone()
-    cursor.close()
-    conn.close()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute('SELECT expiry_date FROM users WHERE user_id = %s', (user_id,))
+            result = cursor.fetchone()
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            print(f"Error checking status: {e}")
     
     if result:
         expiry_str = result[0]
@@ -429,46 +482,47 @@ def auto_kick_checker(application):
     while True:
         try:
             conn = get_db_connection()
-            cursor = conn.cursor()
-            now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            
-            soon_str = (datetime.now() + timedelta(hours=24)).strftime('%Y-%m-%d %H:%M:%S')
-            cursor.execute('SELECT user_id FROM users WHERE expiry_date <= %s AND expiry_date > %s AND warned = 0 AND kicked = 0', (soon_str, now_str))
-            warn_users = cursor.fetchall()
-            
-            for row in warn_users:
-                u_id = row[0]
-                try:
-                    application.bot.send_message(
-                        chat_id=u_id,
-                        text="⚠️ **សេចក្តីជូនដំណឹង:** សមាជិកភាពគ្រុបរបស់អ្នកនឹងត្រូវផុតកំណត់ក្នុងរយៈពេល ២៤ ម៉ោងខាងមុខនេះហើយ! សូមបន្តកញ្ចប់សមាជិកភាពរបស់អ្នកជាមុនសិន ដើម្បីកុំឱ្យ Bot ទាត់ចេញពីគ្រុបដោយស្វ័យប្រវត្តិ។ (ចុច /start)"
-                    )
-                    cursor.execute('UPDATE users SET warned = 1 WHERE user_id = %s', (u_id,))
-                    conn.commit()
-                except Exception as e:
-                    print(f"Error sending warning to {u_id}: {e}")
+            if conn:
+                cursor = conn.cursor()
+                now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                
+                soon_str = (datetime.now() + timedelta(hours=24)).strftime('%Y-%m-%d %H:%M:%S')
+                cursor.execute('SELECT user_id FROM users WHERE expiry_date <= %s AND expiry_date > %s AND warned = 0 AND kicked = 0', (soon_str, now_str))
+                warn_users = cursor.fetchall()
+                
+                for row in warn_users:
+                    u_id = row[0]
+                    try:
+                        application.bot.send_message(
+                            chat_id=u_id,
+                            text="⚠️ **សេចក្តីជូនដំណឹង:** សមាជិកភាពគ្រុបរបស់អ្នកនឹងត្រូវផុតកំណត់ក្នុងរយៈពេល ២៤ ម៉ោងខាងមុខនេះហើយ! សូមបន្តកញ្ចប់សមាជិកភាពរបស់អ្នកជាមុនសិន ដើម្បីកុំឱ្យ Bot ទាត់ចេញពីគ្រុបដោយស្វ័យប្រវត្តិ។ (ចុច /start)"
+                        )
+                        cursor.execute('UPDATE users SET warned = 1 WHERE user_id = %s', (u_id,))
+                        conn.commit()
+                    except Exception as e:
+                        print(f"Error sending warning to {u_id}: {e}")
 
-            cursor.execute('SELECT user_id FROM users WHERE expiry_date < %s AND kicked = 0', (now_str,))
-            expired_users = cursor.fetchall()
-            
-            for row in expired_users:
-                user_id = row[0]
-                try:
-                    application.bot.ban_chat_member(chat_id=GROUP_CHAT_ID, user_id=user_id)
-                    application.bot.unban_chat_member(chat_id=GROUP_CHAT_ID, user_id=user_id)
+                cursor.execute('SELECT user_id FROM users WHERE expiry_date < %s AND kicked = 0', (now_str,))
+                expired_users = cursor.fetchall()
+                
+                for row in expired_users:
+                    user_id = row[0]
+                    try:
+                        application.bot.ban_chat_member(chat_id=GROUP_CHAT_ID, user_id=user_id)
+                        application.bot.unban_chat_member(chat_id=GROUP_CHAT_ID, user_id=user_id)
+                        
+                        application.bot.send_message(
+                            chat_id=user_id, 
+                            text="⏰ សមាជិកភាពរបស់អ្នកបានផុតកំណត់ហើយ! Bot បានទាត់អ្នកចេញពីគ្រុបដោយស្វ័យប្រវត្តិ។\n\n👉 សូមចុច /start ដើម្បីបង់ប្រាក់ទិញកញ្ចប់សមាជិកភាពថ្មី និងចូលគ្រុបវិញ។"
+                        )
+                    except Exception as e:
+                        print(f"Error kicking user {user_id}: {e}")
                     
-                    application.bot.send_message(
-                        chat_id=user_id, 
-                        text="⏰ សមាជិកភាពរបស់អ្នកបានផុតកំណត់ហើយ! Bot បានទាត់អ្នកចេញពីគ្រុបដោយស្វ័យប្រវត្តិ។\n\n👉 សូមចុច /start ដើម្បីបង់ប្រាក់ទិញកញ្ចប់សមាជិកភាពថ្មី និងចូលគ្រុបវិញ។"
-                    )
-                except Exception as e:
-                    print(f"Error kicking user {user_id}: {e}")
-                
-                cursor.execute('UPDATE users SET kicked = 1 WHERE user_id = %s', (user_id,))
-                conn.commit()
-                
-            cursor.close()
-            conn.close()
+                    cursor.execute('UPDATE users SET kicked = 1 WHERE user_id = %s', (user_id,))
+                    conn.commit()
+                    
+                cursor.close()
+                conn.close()
         except Exception as e:
             print(f"Database error in auto_kick: {e}")
             
