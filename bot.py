@@ -12,13 +12,8 @@ from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import TelegramError
 from telegram.ext import (
-    ApplicationBuilder,
-    CallbackQueryHandler,
-    ChatJoinRequestHandler,
-    CommandHandler,
-    ContextTypes,
-    MessageHandler,
-    filters,
+    ApplicationBuilder, CallbackQueryHandler, ChatJoinRequestHandler,
+    CommandHandler, ContextTypes, MessageHandler, filters,
 )
 
 # ============================================================
@@ -58,6 +53,7 @@ def run_web():
     app_web.run(host="0.0.0.0", port=port, use_reloader=False)
 
 threading.Thread(target=run_web, daemon=True).start()
+
 
 # ------------------------- Utilities -------------------------
 def now_dt():
@@ -161,10 +157,14 @@ def main_keyboard(lang="km"):
 
 def admin_main_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📊 ស្ថិតិប្រព័ន្ធ", callback_data="adm_stats"), InlineKeyboardButton("📋 បញ្ជីសមាជិក", callback_data="adm_members")],
-        [InlineKeyboardButton("📜 Admin Audit Logs", callback_data="adm_logs"), InlineKeyboardButton("📤 Export CSV", callback_data="adm_export")],
-        [InlineKeyboardButton("📢 ផ្ញើសារ Broadcast", callback_data="adm_broadcast_prompt"), InlineKeyboardButton("➕ បន្ថែមថ្ងៃ User", callback_data="adm_adddays_prompt")],
-        [InlineKeyboardButton("👢 ដក User ចេញគ្រុប", callback_data="adm_kick_prompt"), InlineKeyboardButton("📸 ប្តូរ QR Code", callback_data="adm_qr_prompt")],
+        [InlineKeyboardButton("📊 ស្ថិតិប្រព័ន្ធ", callback_data="adm_stats"),
+         InlineKeyboardButton("📋 បញ្ជីសមាជិក", callback_data="adm_members")],
+        [InlineKeyboardButton("📜 Admin Audit Logs", callback_data="adm_logs"),
+         InlineKeyboardButton("📤 Export CSV", callback_data="adm_export")],
+        [InlineKeyboardButton("📢 ផ្ញើសារ Broadcast", callback_data="adm_broadcast_prompt"),
+         InlineKeyboardButton("➕ បន្ថែមថ្ងៃ User", callback_data="adm_adddays_prompt")],
+        [InlineKeyboardButton("👢 ដក User ចេញគ្រុប", callback_data="adm_kick_prompt"),
+         InlineKeyboardButton("📸 ប្តូរ QR Code", callback_data="adm_qr_prompt")],
         [InlineKeyboardButton("🔄 ធ្វើឱ្យស្រស់ (Refresh)", callback_data="adm_panel")]
     ])
 
@@ -241,6 +241,7 @@ def init_db():
         conn.close()
 
 init_db()
+
 
 # --------------------------- /start --------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -322,6 +323,7 @@ async def notify_referrer(context, referrer_id):
         await context.bot.send_message(chat_id=referrer_id, text=msg)
     except TelegramError:
         logger.info("Could not notify referrer %s", referrer_id)
+
 
 # ----------------------- User callbacks ----------------------
 async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -427,13 +429,15 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.exception("Could not send QR code")
             await query.message.reply_text(caption + "\n\n⚠️ មិនអាចបង្ហាញ QR Code បានទេ។ សូមទាក់ទង Admin។")
 
-# ------------------------- Receipt flow --------------------
+
+# ------------------------- Receipt flow (Smart Auto-Verify) ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user or not update.message or not update.message.photo:
         return
     user_id = user.id
-
+    
+    # Check if admin is sending QR code update
     if is_admin(user_id) and admin_states.get(user_id) == "waiting_qr":
         db_execute("""
             INSERT INTO bot_settings (key, value) VALUES ('custom_qr_file_id', %s)
@@ -471,10 +475,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if conn is None:
         await update.message.reply_text("❌ Database error.")
         return
-
+    
     try:
         with conn:
             with conn.cursor() as cur:
+                # 1. ពិនិត្យមើលថាតើ Receipt Unique ID ឬ File ID នេះធ្លាប់ត្រូវបានប្រើប្រាស់រួចហើយឬនៅ (Duplicate Check)
                 cur.execute("SELECT user_id, status FROM used_receipts WHERE photo_file_id = %s", (unique_id,))
                 used_check = cur.fetchone()
                 
@@ -482,15 +487,17 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 req_check = cur.fetchone()
 
                 if used_check or req_check:
+                    # ប្រសិនបើធ្លាប់ប្រើហើយ Bot ធ្វើការទប់ស្កាត់ និងបដិសេធភ្លាមៗ (Auto-Reject Duplicate)
                     logger.warning(f"Duplicate receipt detected! User {user_id} tried to reuse receipt unique_id: {unique_id}")
                     await update.message.reply_text(
                         "❌ **កំហុស៖ វិក្កយបត្រនេះត្រូវបានប្រើប្រាស់ក្នុងប្រព័ន្ធរួចហើយ!**\n"
-                        "ប្រព័ន្ធ Auto-Verify បានចាប់យកលេខសម្គាល់វិក្កយបត្រនេះ និងបដិសេធការស្នើសុំซ้ำដោយស្វ័យប្រវត្តិ។ សូមប្រើវិក្កយបត្រថ្មីដែលត្រឹមត្រូវ។"
+                        "ប្រព័ន្ធ Auto-Verify បានចាប់យកលេខសម្គាល់វិក្កយបត្រនេះ ហើយปฏิเสธការស្នើសុំซ้ำដោយស្វ័យប្រវត្តិ។ សូមប្រើវិក្កយបត្រថ្មីដែលត្រឹមត្រូវ។"
                         if lang == "km" else
                         "❌ **Error: This receipt has already been used in the system!** Auto-rejected."
                     )
                     return
 
+                # 2. ប្រសិនបារូបភាពថ្មីសុទ្ធសាធ ធ្វើការកត់ត្រាទុកក្នុង Database ជា Pending Request
                 cur.execute("""
                     INSERT INTO payment_requests
                     (photo_unique_id, telegram_file_id, user_id, package_days, status, created_at)
@@ -503,6 +510,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         conn.close()
 
+    # បង្កើតប៊ូតុងសម្រាប់ Admin ពិនិត្យเฉพาะករណីមានវិក្កយបត្រថ្មីចូលមកប៉ុណ្ណោះ
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user_id}_{days}_{unique_id}"),
@@ -522,7 +530,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🆔 User ID៖ `{user_id}`\n"
                 f"📦 កញ្ចប់៖ {PACKAGES[days]['label']}\n"
                 f"🧾 Receipt Unique Hash: `{unique_id}`\n\n"
-                "💡 *ប្រព័ន្ធ Auto-Verify បានចាប់យកលេខកូដវិក្កយបត្រនេះរួចរាល់ និងរក្សាទុកក្នុងទិន្នន័យដើម្បីការពារการយកមកប្រើซ้ำ។*"
+                "💡 *ប្រព័ន្ធ Auto-Verify បានចាប់យកលេខកូដវិក្កយបត្រនេះរួចរាល់ និងរក្សាទុកក្នុងទិន្នន័យដើម្បីការពារការយកមកប្រើซ้ำ។*"
             ),
             reply_markup=keyboard,
             parse_mode="Markdown"
@@ -536,11 +544,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.exception("Could not send receipt to admin")
         await update.message.reply_text("❌ Could not send receipt to admin.")
 
-# ------------------ Text Message Handler -------------------
+
+# ------------------ Text Message Handler (Admin prompts) -----
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user or not is_admin(user.id):
         return
+    
     admin_id = user.id
     state = admin_states.get(admin_id)
     text = update.message.text.strip()
@@ -589,6 +599,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text(f"✅ បានដក User `{uid}` ចេញពីគ្រុបជោគជ័យ។", parse_mode="Markdown", reply_markup=admin_main_keyboard())
         except Exception:
             await update.message.reply_text("❌ កំហុស៖ មិនអាចដក User នេះបានទេ។ សូមពិនិត្យ User ID ម្តងទៀត។", reply_markup=admin_main_keyboard())
+
 
 # ------------------ Secure private invite --------------------
 async def handle_chat_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -684,6 +695,7 @@ async def decline_request(context, user_id, message):
     except TelegramError:
         pass
 
+
 # --------------------- Membership helper ---------------------
 async def add_membership_days(user_id, days, note):
     conn = get_db_connection()
@@ -704,17 +716,16 @@ async def add_membership_days(user_id, days, note):
                     INSERT INTO users (user_id, username, expiry_date, kicked, warned, package_info)
                     VALUES (%s, %s, %s, 0, 0, %s)
                     ON CONFLICT (user_id) DO UPDATE SET
-                        expiry_date = EXCLUDED.expiry_date,
-                        kicked = 0,
-                        warned = 0,
-                        package_info = EXCLUDED.package_info
+                        expiry_date = EXCLUDED.expiry_date, kicked = 0,
+                        warned = 0, package_info = EXCLUDED.package_info
                 """, (user_id, str(user_id), expiry, package))
-                return expiry
+        return expiry
     except Exception:
         logger.exception("Could not add membership days")
         return None
     finally:
         conn.close()
+
 
 # --------------------- Admin receipt & panel actions ---------
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -764,6 +775,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("📸 **Change QR Code Mode**\n\nសូមផ្ញើរូបភាព QR Code ថ្មីមកកាន់ Chat នេះ៖")
         return
 
+    # Receipt Approvals & Extensions
     if data.startswith("approve_"):
         parts = data.split("_", 3)
         if len(parts) != 4:
@@ -820,6 +832,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             warned = 0, package_info = EXCLUDED.package_info
                     """, (user_id, str(user_id), expiry_text, PACKAGES[days]["label"]))
                     
+                    # บันทឹกลงตาราง Used Receipts เพื่อป้องกันการนำกลับมาใช้อีกอย่างถาวร
                     cur.execute("""
                         INSERT INTO used_receipts (photo_file_id, user_id, used_at)
                         VALUES (%s, %s, %s) ON CONFLICT (photo_file_id) DO NOTHING
@@ -905,6 +918,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except TelegramError:
             pass
 
+
 # -------------------------- Status & Panel Actions -----------
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -941,10 +955,11 @@ async def extend_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     lang = get_user_lang(update.callback_query.from_user.id)
     await update.callback_query.message.reply_text("📦 សូមជ្រើសរើសកញ្ចប់៖", reply_markup=package_keyboard(lang))
 
+
 async def admin_panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
-    await update.message.reply_text("👑 Admin Control Panel\n\nសូមជ្រើសរើសមុខងារខាងក្រោម៖", reply_markup=admin_main_keyboard(), parse_mode="Markdown")
+    await update.message.reply_text("👑 **Admin Control Panel**\n\nសូមជ្រើសរើសមុខងារខាងក្រោម៖", reply_markup=admin_main_keyboard(), parse_mode="Markdown")
 
 async def stats_action(query):
     rows = db_execute("SELECT expiry_date, kicked FROM users", fetchall=True)
@@ -988,6 +1003,7 @@ async def export_action(query, context):
     file_obj.name = "members_data.csv"
     await context.bot.send_document(chat_id=query.from_user.id, document=file_obj, caption="📊 ទិន្នន័យសមាជិក (CSV)")
 
+
 # --------------------- Expiry background job -----------------
 async def expiry_job(context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -1001,58 +1017,59 @@ async def expiry_job(context: ContextTypes.DEFAULT_TYPE):
                     now_text = fmt_dt(now)
                     soon_text = fmt_dt(now + timedelta(hours=24))
                     cur.execute("""
-                        SELECT user_id FROM users WHERE expiry_date <= %s AND expiry_date > %s AND warned = 0 AND kicked = 0
+                        SELECT user_id FROM users
+                        WHERE expiry_date <= %s AND expiry_date > %s
+                          AND warned = 0 AND kicked = 0
                     """, (soon_text, now_text))
                     warn_ids = [r[0] for r in cur.fetchall()]
-                    
                     cur.execute("""
-                        SELECT user_id FROM users WHERE expiry_date <= %s AND kicked = 0
+                        SELECT user_id FROM users
+                        WHERE expiry_date <= %s AND kicked = 0
                     """, (now_text,))
                     expired_ids = [r[0] for r in cur.fetchall()]
-
-                    for uid in warn_ids:
-                        try:
-                            lang = get_user_lang(uid)
-                            msg = (
-                                "⚠️ សមាជិកភាពរបស់អ្នកនឹងផុតកំណត់ក្នុង ២៤ ម៉ោង។"
-                                if lang == "km" else
-                                "⚠️ Your membership expires in 24 hours."
-                            )
-                            await context.bot.send_message(
-                                uid,
-                                msg,
-                                reply_markup=InlineKeyboardMarkup([[
-                                    InlineKeyboardButton("💳 បន្តសមាជិកភាព" if lang == "km" else "💳 Extend", callback_data="extend_menu")
-                                ]]),
-                            )
-                            db_execute("UPDATE users SET warned = 1 WHERE user_id = %s AND kicked = 0", (uid,))
-                        except Exception:
-                            pass
-
-                    for uid in expired_ids:
-                        try:
-                            await context.bot.ban_chat_member(chat_id=GROUP_CHAT_ID, user_id=uid)
-                            await context.bot.unban_chat_member(chat_id=GROUP_CHAT_ID, user_id=uid)
-                        except TelegramError:
-                            continue
-                        try:
-                            lang = get_user_lang(uid)
-                            msg = (
-                                "⏰ សមាជិកភាពផុតកំណត់ និងត្រូវបានដកចេញពីគ្រុប។"
-                                if lang == "km" else
-                                "⏰ Membership expired and removed from group."
-                            )
-                            await context.bot.send_message(uid, msg)
-                        except TelegramError:
-                            pass
-                        db_execute("UPDATE users SET kicked = 1 WHERE user_id = %s", (uid,))
+            for uid in warn_ids:
+                try:
+                    lang = get_user_lang(uid)
+                    msg = (
+                        "⚠️ សមាជិកភាពរបស់អ្នកនឹងផុតកំណត់ក្នុង ២៤ ម៉ោង។"
+                        if lang == "km" else
+                        "⚠️ Your membership expires in 24 hours."
+                    )
+                    await context.bot.send_message(
+                        uid, msg,
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("💳 បន្តសមាជិកភាព" if lang == "km" else "💳 Extend", callback_data="extend_menu")
+                        ]]),
+                    )
+                    db_execute("UPDATE users SET warned = 1 WHERE user_id = %s AND kicked = 0", (uid,))
+                except Exception:
+                    pass
+            for uid in expired_ids:
+                try:
+                    await context.bot.ban_chat_member(chat_id=GROUP_CHAT_ID, user_id=uid)
+                    await context.bot.unban_chat_member(chat_id=GROUP_CHAT_ID, user_id=uid)
+                except TelegramError:
+                    continue
+                try:
+                    lang = get_user_lang(uid)
+                    msg = (
+                        "⏰ សមាជិកភាពផុតកំណត់ និងត្រូវបានដកចេញពីគ្រុប។"
+                        if lang == "km" else
+                        "⏰ Membership expired and removed from group."
+                    )
+                    await context.bot.send_message(uid, msg)
+                except TelegramError:
+                    pass
+                db_execute("UPDATE users SET kicked = 1 WHERE user_id = %s", (uid,))
         finally:
             conn.close()
     except Exception:
         logger.exception("Expiry job failed")
 
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error("Unhandled Telegram update error", exc_info=context.error)
+
 
 def main():
     token = os.getenv("BOT_TOKEN")
@@ -1067,11 +1084,11 @@ def main():
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
     application.add_handler(ChatJoinRequestHandler(handle_chat_join_request))
-
+    
     application.add_handler(CallbackQueryHandler(button_callback, pattern=r"^(approve_|reject_|ext_|adm_)"))
     application.add_handler(CallbackQueryHandler(package_callback, pattern=r"^(pkg_|get_referral_link|user_|switch_lang|referral_dashboard)"))
     application.add_handler(CallbackQueryHandler(extend_menu_callback, pattern=r"^extend_menu$"))
-
+    
     application.add_error_handler(error_handler)
 
     if application.job_queue:
