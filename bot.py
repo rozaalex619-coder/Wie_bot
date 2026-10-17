@@ -28,7 +28,7 @@ app_web = Flask(__name__)
 
 @app_web.route("/")
 def home():
-    return "Subscription Bot with Safe Cloud PostgreSQL Storage is running!"
+    return "Subscription Bot with Safe Cloud PostgreSQL & Detailed Member View is running!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -59,7 +59,7 @@ def get_db_connection():
 user_selected_package = {}
 user_last_photo_time = {}
 
-# 2. បង្កើត Database Tables លើ Cloud PostgreSQL (មានសុវត្ថិភាព មិនលុបទិន្នន័យចាស់)
+# 2. បង្កើត Database Tables លើ Cloud PostgreSQL
 def init_db():
     conn = get_db_connection()
     if conn is None:
@@ -286,7 +286,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(
                 "⚠️ **សូមជ្រើសរើសកញ្ចប់សមាជិកភាពជាមុនសិន!**\n\n"
-                "អ្នកមិនទាន់បានជ្រើសរើសកញ្ចប់ទេ សូមចុចជ្រើសរើសកញ្ចប់ខាងក្រោម រួចค่อยផ្ញើរូបភាពវិក្កយបត្រ (Slip) មកម្តងទៀត៖",
+                "អ្នកមិនទាន់បានជ្រើសរើសកញ្ចប់ទេ សូមចុចជ្រើសរើសកញ្ចប់ខាងក្រោម រួចើផ្ញើរូបភាពវិក្កយបត្រ (Slip) មកម្តងទៀត៖",
                 reply_markup=reply_markup,
                 parse_mode="Markdown"
             )
@@ -755,7 +755,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"Error in stats: {e}")
 
-# Admin មើលបញ្ជីសមាជិក
+# Admin មើលបញ្ជីសមាជិក (កែប្រែបង្ហាញថ្ងៃ ខែ និងម៉ោង ដែលនៅសល់យ៉ាងលម្អិត)
 async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -782,7 +782,7 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await target_message.reply_text("📭 មិនទាន់មានទិន្នន័យសមាជិកនៅក្នុងប្រព័ន្ធទេ។")
             return
             
-        msg = "📋 **បញ្ជីឈ្មោះ កញ្ចប់ តម្លៃ និងថ្ងៃផុតកំណត់សមាជិកទាំងអស់៖**\n\n"
+        msg = "📋 **បញ្ជីឈ្មោះ កញ្ចប់ ថ្ងៃខែ និងម៉ោងនៅសល់របស់សមាជិកទាំងអស់៖**\n\n"
         now_dt = datetime.now(CAMBODIA_TZ)
         
         for row in rows:
@@ -792,7 +792,7 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pkg_desc = package_info if package_info else "មិនមានទិន្នន័យ"
             
             if kicked == 1:
-                status_text = f"🔴 បានទាត់ចេញ | ផុតកំណត់ថ្ងៃ៖ {exp_str}"
+                status_text = f"🔴 បានទាត់ចេញ | ផុតកំណត់កាលពី៖ {exp_str}"
             else:
                 try:
                     exp_date = datetime.strptime(exp_str, '%Y-%m-%d %H:%M:%S')
@@ -801,13 +801,24 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         rem = exp_date - now_dt
                         days = rem.days
                         hours = rem.seconds // 3600
-                        status_text = f"🟢 សកម្ម (សល់ {days} ថ្ងៃ និង {hours} ម៉ោង) | ផុតកំណត់៖ {exp_str}"
+                        minutes = (rem.seconds % 3600) // 60
+                        status_text = (
+                            f"🟢 **សកម្ម (Active)**\n"
+                            f"⏳ **នៅសល់៖** `{days}` ថ្ងៃ `{hours}` ម៉ោង `{minutes}` នាទី\n"
+                            f"📅 **ផុតកំណត់នៅ៖** `{exp_str}`"
+                        )
                     else:
-                        status_text = f"🔴 ផុតកំណត់ហើយ | កាលបរិច្ឆេទ៖ {exp_str}"
+                        status_text = f"🔴 **ផុតកំណត់ហើយ**\n📅 **កាលបរិច្ឆេទផុត៖** `{exp_str}`"
                 except Exception:
-                    status_text = f"📅 ផុតកំណត់ថ្ងៃ៖ {exp_str}"
+                    status_text = f"📅 **ផុតកំណត់ថ្ងៃ៖** `{exp_str}`"
                     
-            msg += f"👤 ឈ្មោះ: **{name}** {badge}\n🆔 ID: `{u_id}`\n📦 កញ្ចប់/តម្លៃ: **{pkg_desc}**\n⏳ ស្ថានភាព: {status_text}\n----------------------------------\n"
+            msg += (
+                f"👤 **ឈ្មោះ:** {name} {badge}\n"
+                f"🆔 **User ID:** `{u_id}`\n"
+                f"📦 **កញ្ចប់/តម្លៃ:** {pkg_desc}\n"
+                f"{status_text}\n"
+                f"----------------------------------\n"
+            )
             
         if len(msg) > 4000:
             for x in range(0, len(msg), 4000):
@@ -845,12 +856,13 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 remaining = expiry_date - now_dt
                 days = remaining.days
                 hours = remaining.seconds // 3600
+                minutes = (remaining.seconds % 3600) // 60
                 
                 keyboard = [[InlineKeyboardButton("💳 ต่ออายุ / បន្តសមាជិកភាព (Extend)", callback_data="extend_menu")]]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 
                 await target_message.reply_text(
-                    f"ស្ថានភាពសមាជិកភាព៖ ដំណើរការធម្មតា ✅\nសល់ពេល៖ {days} ថ្ងៃ និង {hours} ម៉ោងទៀត\nផុតកំណត់នៅ៖ {expiry_str}",
+                    f"ស្ថានភាពសមាជិកភាព៖ ដំណើរការធម្មតា ✅\nសល់ពេល៖ {days} ថ្ងៃ {hours} ម៉ោង {minutes} នាទីទៀត\nផុតកំណត់នៅ៖ {expiry_str}",
                     reply_markup=reply_markup
                 )
             else:
@@ -978,5 +990,5 @@ if __name__ == "__main__":
     
     threading.Thread(target=auto_kick_checker, args=(application,), daemon=True).start()
     
-    print("Subscription Bot with Safe Cloud PostgreSQL & Secure Anti-Fraud is starting...")
+    print("Subscription Bot with Safe Cloud PostgreSQL & Detailed Member View is starting...")
     application.run_polling()
