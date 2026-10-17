@@ -12,7 +12,7 @@ app_web = Flask(__name__)
 
 @app_web.route("/")
 def home():
-    return "Subscription Bot with Cloud PostgreSQL & Free Trial is running!"
+    return "Subscription Bot with Cloud PostgreSQL & Referral Hours is running!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -44,7 +44,7 @@ def get_db_connection():
 # រក្សាទុកកញ្ចប់ដែល User បានជ្រើសរើសបណ្តោះអាសន្ន
 user_selected_package = {}
 
-# 2. បង្កើត Database Tables លើ Cloud PostgreSQL
+# 2. បង្កើត Database Tables លើ Cloud PostgreSQL (លុប free_claimed ចោល)
 def init_db():
     conn = get_db_connection()
     if conn is None:
@@ -58,7 +58,6 @@ def init_db():
                 username TEXT,
                 expiry_date TEXT,
                 kicked INTEGER DEFAULT 0,
-                free_claimed INTEGER DEFAULT 0,
                 warned INTEGER DEFAULT 0,
                 package_info TEXT DEFAULT 'មិនមាន',
                 referral_code TEXT,
@@ -81,7 +80,7 @@ def init_db():
 
 init_db()
 
-# 3. ពាក្យបញ្ជា /start (รองรับ Referral Link)
+# 3. ពាក្យបញ្ជា /start (รองรับ Referral Link ថែមម៉ោង)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
@@ -98,16 +97,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
     conn = get_db_connection()
-    result = None
     if conn:
         try:
             cursor = conn.cursor()
-            cursor.execute('SELECT free_claimed, expiry_date FROM users WHERE user_id = %s', (user_id,))
+            cursor.execute('SELECT expiry_date FROM users WHERE user_id = %s', (user_id,))
             result = cursor.fetchone()
             
             if not result:
                 default_expiry = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
                 
+                # បើមានคนแนะนำ ឱ្យโบนัสเพิ่ม ១ម៉ោង (1 hour) ដល់ผู้แนะนำ
                 if referrer_id:
                     cursor.execute('SELECT expiry_date FROM users WHERE user_id = %s', (referrer_id,))
                     ref_res = cursor.fetchone()
@@ -116,46 +115,41 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             ref_exp = datetime.strptime(ref_res[0], '%Y-%m-%d %H:%M:%S')
                             now = datetime.now()
                             base_time = ref_exp if ref_exp > now else now
-                            new_ref_exp = (base_time + timedelta(days=2)).strftime('%Y-%m-%d %H:%M:%S')
+                            new_ref_exp = (base_time + timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
                             cursor.execute('UPDATE users SET expiry_date = %s WHERE user_id = %s', (new_ref_exp, referrer_id))
-                            await context.bot.send_message(chat_id=referrer_id, text="🎁 មានមិត្តភក្តិបានចូលប្រើប្រាស់ Bot តាមរយៈ Link របស់អ្នក! អ្នកទទួលបានការថែមជូន ២ ថ្ងៃដោយស្វ័យប្រវត្តិ។")
+                            await context.bot.send_message(chat_id=referrer_id, text="🎁 មានមិត្តភក្តិបានចូលប្រើប្រាស់ Bot តាមរយៈ Link របស់អ្នក! អ្នកទទួលបានការថែមជូន **១ម៉ោង** ដោយស្វ័យប្រវត្តិ។")
                         except Exception as e:
                             print(f"Error giving referral bonus: {e}")
 
                 cursor.execute('''
-                    INSERT INTO users (user_id, username, expiry_date, kicked, free_claimed, warned, package_info, referral_code, referred_by)
-                    VALUES (%s, %s, %s, 0, 0, 0, 'មិនទាន់ជ្រើសរើសកញ្ចប់', %s, %s)
+                    INSERT INTO users (user_id, username, expiry_date, kicked, warned, package_info, referral_code, referred_by)
+                    VALUES (%s, %s, %s, 0, 0, 'មិនទាន់ជ្រើសរើសកញ្ចប់', %s, %s)
                 ''', (user_id, username, default_expiry, f"ref_{user_id}", referrer_id))
                 conn.commit()
             
-            cursor.execute('SELECT free_claimed FROM users WHERE user_id = %s', (user_id,))
-            result = cursor.fetchone()
             cursor.close()
             conn.close()
         except Exception as e:
             print(f"Error in start query: {e}")
     
-    keyboard = []
-    if not result or result[0] == 0:
-        keyboard.append([InlineKeyboardButton("🎁 សាកល្បងប្រើប្រាស់បានចំនួន១ ថ្ងៃ (Free Trial)", callback_data="claim_free")])
-    
-    keyboard.extend([
+    # គ្មានប៊ូតុង Free Trial ទៀតទេ មានតែកញ្ចប់បង់ប្រាក់ និងប៊ូតុង Referral
+    keyboard = [
         [InlineKeyboardButton("៥ ថ្ងៃ - ២ ដុល្លារ", callback_data="pkg_5")],
         [InlineKeyboardButton("១០ ថ្ងៃ - ៣ ដុល្លារ", callback_data="pkg_10")],
         [InlineKeyboardButton("២០ ថ្ងៃ - ៥ ដុល្លារ", callback_data="pkg_20")],
         [InlineKeyboardButton("៣០ ថ្ងៃ - ៦ ដុល្លារ", callback_data="pkg_30")],
-        [InlineKeyboardButton("👥 យក Link ណែនាំមិត្តភក្តិ (ថែម ២ ថ្ងៃ)", callback_data="get_referral_link")]
-    ])
+        [InlineKeyboardButton("👥 យក Link ណែនាំមិត្តភក្តិ (ថែម ១ម៉ោង)", callback_data="get_referral_link")]
+    ]
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     welcome_text = (
         f"សួស្តី {user.first_name}!\n\n"
         f"សូមស្វាគមន៍មកកាន់ប្រព័ន្ធទិញសមាជិកភាពគ្រុបរបស់យើង។ "
-        f"អ្នកអាចជ្រើសរើសកញ្ចប់សមាជិកភាព ឬសាកល្បងប្រើប្រាស់នៅខាងក្រោម៖"
+        f"សូមជ្រើសរើសកញ្ចប់សមាជិកភាពនៅខាងក្រោម៖"
     )
     await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
-# 4. ដោះស្រាយពេលអតិថិជនចុចយក Free Trial, Package ឬ Referral Link
+# 4. ដោះស្រាយពេលអតិថិជនចុច Package ឬ Referral Link
 async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -169,52 +163,12 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             f"🔗 **តំណភ្ជាប់ណែនាំមិត្តភក្តិ (Referral Link) របស់អ្នក៖**\n\n"
             f"`{ref_link}`\n\n"
-            f"💡 **អត្ថប្រយោជន៍៖** ពេលมีមិត្តភក្តិចុចចូលតាម Link នេះ អ្នកនឹងទទួលបានការថែមជូន **២ ថ្ងៃ** ចូលក្នុងសមាជិកភាពរបស់អ្នកដោយស្វ័យប្រវត្តិ!",
+            f"💡 **អត្ថប្រយោជន៍៖** ពេលมีមិត្តភក្តិចុចចូលតាម Link នេះ អ្នកនឹងទទួលបានការថែមជូន **១ម៉ោង** ចូលក្នុងសមាជិកភាពរបស់អ្នកដោយស្វ័យប្រវត្តិ!",
             parse_mode="Markdown"
         )
         return
 
-    if data == "claim_free":
-        conn = get_db_connection()
-        if not conn:
-            await query.message.reply_text("⚠️ មានបញ្ហាក្នុងការតភ្ជាប់ Database សូមព្យាយាមម្តងទៀត។")
-            return
-            
-        try:
-            cursor = conn.cursor()
-            cursor.execute('SELECT free_claimed FROM users WHERE user_id = %s', (user_id,))
-            result = cursor.fetchone()
-            
-            if result and result[0] == 1:
-                cursor.close()
-                conn.close()
-                await query.message.reply_text("❌ អ្នកបានប្រើប្រាស់សិទ្ធិសាកល្បងអស់ចំនួន ១ ថ្ងៃរួចរាល់ហើយ! (មិនអាចយកម្តងទៀតបានទេ)")
-                return
-                
-            expiry = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
-            username = query.from_user.username or query.from_user.first_name
-            package_desc = "១ ថ្ងៃ - 0 ដុល្លារ (Free Trial)"
-            
-            cursor.execute('''
-                UPDATE users SET username = %s, expiry_date = %s, kicked = 0, free_claimed = 1, warned = 0, package_info = %s WHERE user_id = %s
-            ''', (username, expiry, package_desc, user_id))
-            conn.commit()
-            cursor.close()
-            conn.close()
-        except Exception as e:
-            print(f"Error in claim_free: {e}")
-            await query.message.reply_text("⚠️ មានបញ្ហាក្នុងការរក្សាទុកទិន្នន័យ។")
-            return
-        
-        success_message = (
-            f"🎉 អបអរសាទរ! អ្នកទទួលបានសិទ្ធិសាកល្បងចំនួន ១ ថ្ងៃជោគជ័យ។\n\n"
-            f"🔗 តំណភ្ជាប់ចូលគ្រុប (Group Link):\n{GROUP_INVITE_LINK}\n\n"
-            f"📅 មានសុពលភាពដល់ថ្ងៃ៖ {expiry}\n"
-            f"ពិនិត្យថ្ងៃខែនៅសល់ដោយប្រើពាក្យបញ្ជា /status"
-        )
-        await query.message.reply_text(success_message)
-        
-    elif data.startswith("pkg_"):
+    if data.startswith("pkg_"):
         days = int(data.split("_")[1])
         user_selected_package[user_id] = days
         
@@ -295,7 +249,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("មានបញ្ហាក្នុងការផ្ញើរូបភាព សូមព្យាយាមម្តងទៀត។")
         return
 
-    # Background Thread សម្រាប់ Auto-Approve បន្ទាប់ពី ២ នាទីកន្លះ បើ Admin រវល់
     def auto_verify_worker(app_context, target_user_id, target_days, target_package_desc, msg_chat_id, msg_id, photo_id):
         time.sleep(150)
         try:
@@ -376,9 +329,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 if cursor.rowcount == 0:
                     cursor.execute('''
-                        INSERT INTO users (user_id, username, expiry_date, kicked, free_claimed, warned, package_info) 
-                        VALUES (%s, %s, %s, %s, %s, 0, %s)
-                    ''', (user_id, "Customer", expiry, 0, 1, package_desc))
+                        INSERT INTO users (user_id, username, expiry_date, kicked, warned, package_info) 
+                        VALUES (%s, %s, %s, %s, 0, %s)
+                    ''', (user_id, "Customer", expiry, 0, package_desc))
                     
                 conn.commit()
                 cursor.close()
@@ -446,14 +399,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await query.edit_message_caption(caption=f"{query.message.caption}\n\n➕ [បានបន្ថែមថ្ងៃជោគជ័យ +{ext_days} ថ្ងៃ ប៉ុន្តែផ្ញើសារមិនទាន់ដល់ User]")
 
-# 7. ពាក្យបញ្ជា /stats
+# 7. ពាក្យបញ្ជា /stats (លុប Free Trial stats ចោល)
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
         await update.message.reply_text(f"❌ អ្នកមិនមែនជា Admin ទេ! (User ID របស់អ្នកគឺ: `{user_id}`)", parse_mode="Markdown")
         return
         
-    active_users = expired_users = free_users = 0
+    active_users = expired_users = 0
     conn = get_db_connection()
     if conn:
         try:
@@ -463,9 +416,6 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             cursor.execute("SELECT COUNT(*) FROM users WHERE expiry_date < TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')")
             expired_users = cursor.fetchone()[0]
-
-            cursor.execute("SELECT COUNT(*) FROM users WHERE free_claimed = 1")
-            free_users = cursor.fetchone()[0]
             
             cursor.close()
             conn.close()
@@ -475,8 +425,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats_text = (
         f"📊 **ស្ថិតិប្រព័ន្ធសមាជិកភាព (Admin Dashboard)**\n\n"
         f"🟢 សមាជិកសកម្ម (Active): **{active_users} នាក់**\n"
-        f"🔴 សមាជិកអស់សុពលភាព (Expired): **{expired_users} នាក់**\n"
-        f"🎁 អ្នកប្រើប្រាស់សាកល្បងฟรี (Free Trial): **{free_users} នាក់**"
+        f"🔴 សមាជិកអស់សុពលភាព (Expired): **{expired_users} នាក់**"
     )
     await update.message.reply_text(stats_text, parse_mode="Markdown")
 
@@ -492,7 +441,7 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if conn:
         try:
             cursor = conn.cursor()
-            cursor.execute('SELECT user_id, username, expiry_date, kicked, free_claimed, package_info FROM users')
+            cursor.execute('SELECT user_id, username, expiry_date, kicked, package_info FROM users')
             rows = cursor.fetchall()
             cursor.close()
             conn.close()
@@ -507,9 +456,9 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now()
     
     for row in rows:
-        u_id, uname, exp_str, kicked, free_claimed, package_info = row
+        u_id, uname, exp_str, kicked, package_info = row
         name = uname if uname else "មិនមានឈ្មោះ"
-        badge = "🎁 [Free Trial]" if free_claimed == 1 else "💳 [Paid]"
+        badge = "💳 [Paid]"
         pkg_desc = package_info if package_info else "មិនមានទិន្នន័យ"
         
         if kicked == 1:
@@ -535,7 +484,7 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(msg, parse_mode="Markdown")
 
-# 8. ពាក្យបញ្ជា /status (មានភ្ជាប់ប៊ូតុង ต่ออายุ/Extend ពេលជិតផុតកំណត់)
+# 8. ពាក្យបញ្ជា /status
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     result = None
@@ -558,7 +507,6 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             days = remaining.days
             hours = remaining.seconds // 3600
             
-            # បន្ថែមប៊ូតុងต่ออายุ (Extend) ໃຫ້ User អាចចុចបន្តកញ្ចប់បានរហ័ស
             keyboard = [[InlineKeyboardButton("💳 ต่ออายุ / បន្តសមាជិកភាព (Extend)", callback_data="extend_menu")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
@@ -631,7 +579,7 @@ def auto_kick_checker(application):
                         reply_markup = InlineKeyboardMarkup(keyboard)
                         application.bot.send_message(
                             chat_id=user_id, 
-                            text="⏰ សមាជិកភាពរបស់អ្នកបានផុតកំណត់ហើយ! Bot បានទាត់អ្នកចេញពីគ្រុបដោយស្វ័យប្រវត្តិ។\n\n👉 សូមចុចប៊ូតុងខាងក្រោមដើម្បីបង់ប្រាក់ទិញកញ្ចប់សមាជិកភាពថ្មី។",
+                            text="⏰ សមាជិកភាពរបស់អ្នកបានផុតកំណត់ហើយ! Bot បានទាត់អ្នកចេញពីគ្រុបដោយស្វ័យប្រវត្តិ。\n\n👉 សូមចុចប៊ូតុងខាងក្រោមដើម្បីបង់ប្រាក់ទិញកញ្ចប់សមាជិកភាពថ្មី។",
                             reply_markup=reply_markup
                         )
                     except Exception as e:
@@ -664,7 +612,7 @@ if __name__ == "__main__":
     application.add_handler(CommandHandler("admin_members", admin_members))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(CallbackQueryHandler(button_callback, pattern="^(approve_|reject_|ext_)"))
-    application.add_handler(CallbackQueryHandler(package_callback, pattern="^(pkg_|claim_free$|get_referral_link)"))
+    application.add_handler(CallbackQueryHandler(package_callback, pattern="^(pkg_|get_referral_link)"))
     application.add_handler(CallbackQueryHandler(extend_menu_callback, pattern="^extend_menu$"))
     
     application.add_error_handler(error_handler)
