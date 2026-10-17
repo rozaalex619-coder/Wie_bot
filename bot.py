@@ -30,8 +30,9 @@ threading.Thread(target=run_web, daemon=True).start()
 
 # --- ការកំណត់សំខាន់ៗ ---
 ADMIN_ID = 8980369344                      
-GROUP_INVITE_LINK = "https://t.me/+2JquQ2gZnQE4OGU1"  # Link សម្រាប់ Admin ប្រើប្រាស់ផ្ទាល់
-GROUP_CHAT_ID = -1004404523665            # ID របស់ Channel / Group របស់បង
+CHANNEL_ADMIN_LINK = "https://t.me/+2JquQ2gZnQE4OGU1"  # Link សម្រាប់ Admin ប្រើប្រាស់ផ្ទាល់
+CHANNEL_INVITE_LINK = "https://t.me/+tN6CNA6hInBjN2U9"  # Link សម្រាប់ អតិថិជន ចូល
+CHANNEL_CHAT_ID = -1004404523665            # ID របស់ Channel / Group របស់បង
 # ---------------------------------------------
 
 # ទាញយក Database URL ពី Render Environment Variable
