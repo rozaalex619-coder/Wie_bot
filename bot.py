@@ -12,7 +12,6 @@ from telegram.ext import (
     CommandHandler, 
     MessageHandler, 
     CallbackQueryHandler, 
-    ChatJoinRequestHandler, 
     ContextTypes, 
     filters
 )
@@ -29,7 +28,7 @@ app_web = Flask(__name__)
 
 @app_web.route("/")
 def home():
-    return "Subscription Bot with Cloud PostgreSQL & Admin Panel is running!"
+    return "Subscription Bot with Cloud PostgreSQL & Auto-Join is running!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -378,10 +377,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 print(f"Error approving user: {e}")
         
+        # បង្កើត Auto-Join Invite Link (ចូលដោយស្វ័យប្រវត្តិដោយមិនចាំបាច់មាន Join Request)
         try:
             invite_link = await context.bot.create_chat_invite_link(
                 chat_id=GROUP_CHAT_ID,
-                creates_join_request=True,
                 member_limit=1
             )
             custom_link = invite_link.invite_link
@@ -396,7 +395,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"ពិនិត្យថ្ងៃខែនៅសល់ដោយប្រើពាក្យបញ្ជា /status"
             )
             await context.bot.send_message(chat_id=user_id, text=success_message)
-            await query.edit_message_caption(caption=f"{query.message.caption}\n\n✅ [បានអនុម័តជោគជ័យ {days} ថ្ងៃ និងផ្ញើ Link ជូនរួចរាល់]")
+            await query.edit_message_caption(caption=f"{query.message.caption}\n\n✅ [បានអនុម័តជោគជ័យ {days} ថ្ងៃ និងផ្ញើ Auto-Join Link ជូនរួចរាល់]")
         except Exception as e:
             await query.edit_message_caption(caption=f"{query.message.caption}\n\n⚠️ អនុម័តរួច ប៉ុន្តែមានបញ្ហាក្នុងការផ្ញើសារទៅ User")
             
@@ -668,59 +667,6 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target_message = update.callback_query.message if update.callback_query else update.message
     await target_message.reply_document(document=bio, caption="📊 បញ្ជីទិន្នន័យសមាជិកទាំងអស់ក្នុងប្រព័ន្ធ (CSV Export)")
 
-# 7. មុខងារទទួល Join Request ពេលអតិថិជនចុច Link
-async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    req = update.chat_join_request
-    user = req.from_user
-    chat = req.chat
-    
-    keyboard = [
-        [
-            InlineKeyboardButton("✅ យល់ព្រមចូល (Approve)", callback_data=f"accept_req_{chat.id}_{user.id}"),
-            InlineKeyboardButton("❌ បដិសេធ (Decline)", callback_data=f"decline_req_{chat.id}_{user.id}")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    msg_text = (
-        f"📩 **មានអតិថិជនស្នើសុំចូល Channel/Group!**\n\n"
-        f"👤 ឈ្មោះ: {user.first_name} (@{user.username or 'គ្មាន username'})\n"
-        f"🆔 User ID: `{user.id}`\n"
-        f"📍 គ្រុប/ឆានែល: {chat.title}\n\n"
-        f"សូមចុចសម្រេចចិត្តខាងក្រោម៖"
-    )
-    
-    try:
-        await context.bot.send_message(chat_id=ADMIN_ID, text=msg_text, reply_markup=reply_markup, parse_mode="Markdown")
-    except Exception as e:
-        print(f"Error sending join request to admin: {e}")
-
-# 8. ដោះស្រាយពេល Admin ចុច Approve/Decline លើ Join Request តាមប៊ូតុង
-async def join_request_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query.from_user.id != ADMIN_ID:
-        await query.answer("❌ អ្នកមិនមានសិទ្ធិទេ!", show_alert=True)
-        return
-        
-    await query.answer()
-    data = query.data
-    parts = data.split("_")
-    action = parts[0]
-    chat_id = int(parts[2])
-    target_user_id = int(parts[3])
-    
-    try:
-        if action == "accept":
-            await context.bot.approve_chat_join_request(chat_id=chat_id, user_id=target_user_id)
-            await query.edit_message_text(text=f"{query.message.text}\n\n✅ [បានយល់ព្រមឱ្យចូល Channel ជោគជ័យ]")
-            await context.bot.send_message(chat_id=target_user_id, text="🎉 សំណើសុំចូល Channel របស់អ្នកត្រូវបាន Admin យល់ព្រមហើយ! សូមរីករាយកម្សាន្ត។")
-        else:
-            await context.bot.decline_chat_join_request(chat_id=chat_id, user_id=target_user_id)
-            await query.edit_message_text(text=f"{query.message.text}\n\n❌ [បានបដិសេធសំណើ]")
-            await context.bot.send_message(chat_id=target_user_id, text="❌ សំណើសុំចូល Channel របស់អ្នកត្រូវបានបដិសេធ។")
-    except Exception as e:
-        await query.edit_message_text(text=f"{query.message.text}\n\n⚠️ មានបញ្ហាក្នុងការដំណើរការសំណើ៖ {e}")
-
 # 9. ពាក្យបញ្ជា /stats
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -958,17 +904,13 @@ if __name__ == "__main__":
     # Handlers
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(CallbackQueryHandler(button_callback, pattern="^(approve_|reject_|ext_)"))
-    application.add_handler(CallbackQueryHandler(join_request_callback, pattern="^(accept_req_|decline_req_)"))
     application.add_handler(CallbackQueryHandler(admin_panel_callback, pattern="^admin_"))
     application.add_handler(CallbackQueryHandler(package_callback, pattern="^(pkg_|get_referral_link|user_)"))
     application.add_handler(CallbackQueryHandler(extend_menu_callback, pattern="^extend_menu$"))
-    
-    # Chat Join Request Handler
-    application.add_handler(ChatJoinRequestHandler(join_request_handler))
     
     application.add_error_handler(error_handler)
     
     threading.Thread(target=auto_kick_checker, args=(application,), daemon=True).start()
     
-    print("Subscription Bot with Cloud PostgreSQL & Interactive Menus is starting...")
+    print("Subscription Bot with Cloud PostgreSQL & Auto-Join is starting...")
     application.run_polling()
