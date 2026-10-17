@@ -4,7 +4,15 @@ import time
 import os
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+from telegram.ext import (
+    ApplicationBuilder, 
+    CommandHandler, 
+    MessageHandler, 
+    CallbackQueryHandler, 
+    ChatJoinRequestHandler, 
+    ContextTypes, 
+    filters
+)
 from flask import Flask
 
 # 1. ផ្នែក Flask សម្រាប់រក្សាឱ្យ Bot រត់បានយូរលើ Render
@@ -12,7 +20,7 @@ app_web = Flask(__name__)
 
 @app_web.route("/")
 def home():
-    return "Subscription Bot with Cloud PostgreSQL & Referral Hours is running!"
+    return "Subscription Bot with Cloud PostgreSQL & Join Request Handler is running!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -22,8 +30,8 @@ threading.Thread(target=run_web, daemon=True).start()
 
 # --- ការកំណត់សំខាន់ៗ ---
 ADMIN_ID = 8980369344                      
-GROUP_INVITE_LINK = "https://t.me/+2JquQ2gZnQE4OGU1"  
-GROUP_CHAT_ID = -1001234567890            
+GROUP_INVITE_LINK = "https://t.me/+2JquQ2gZnQE4OGU1"  # Link សម្រាប់ Admin ប្រើប្រាស់ផ្ទាល់
+GROUP_CHAT_ID = -1004404523665            # ID របស់ Channel / Group របស់បង
 # ---------------------------------------------
 
 # ទាញយក Database URL ពី Render Environment Variable
@@ -270,7 +278,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cur.close()
             c.close()
 
-            # បង្កើត Single-Use Join Request Invite Link ដោយស្វ័យប្រវត្តិពេល Auto-Approve
+            # បង្កើត Single-Use Join Request Link ផ្ញើជូនអតិថិជនពេល Auto-Verify
             async def send_auto_link():
                 try:
                     invite_link = await app_context.bot.create_chat_invite_link(
@@ -283,7 +291,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     custom_link = GROUP_INVITE_LINK
 
                 success_message = (
-                    f"🎉 អបអរសាទរ! ការទូទាត់របស់អ្នកត្រូវបានផ្ទៀងផ្ទាត់ជោគជ័យដោយស្វ័យប្រវត្តិ (Auto-Verified)។\n\n"
+                    f"🎉 អបអរសាទរ! វិក្កយបត្ររបស់អ្នកត្រូវបានផ្ទៀងផ្ទាត់ជោគជ័យដោយស្វ័យប្រវត្តិ (Auto-Verified)។\n\n"
                     f"🔗 តំណភ្ជាប់ចូលគ្រុប (Group Link):\n{custom_link}\n\n"
                     f"📅 សមាជិកភាពមានសុពលភាព {target_days} ថ្ងៃ ដល់ថ្ងៃ៖ {expiry}\n"
                     f"ពិនិត្យថ្ងៃខែនៅសល់ដោយប្រើពាក្យបញ្ជា /status"
@@ -352,7 +360,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 print(f"Error approving user: {e}")
         
-        # បង្កើត Single-Use Join Request Invite Link ថ្មីសម្រាប់អតិថិជនម្នាក់នេះ
+        # បង្កើត Single-Use Join Request Link ផ្ញើជូនអតិថិជនពេល Admin ចុច Approve
         try:
             invite_link = await context.bot.create_chat_invite_link(
                 chat_id=GROUP_CHAT_ID,
@@ -423,7 +431,61 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await query.edit_message_caption(caption=f"{query.message.caption}\n\n➕ [បានបន្ថែមថ្ងៃជោគជ័យ +{ext_days} ថ្ងៃ ប៉ុន្តែផ្ញើសារមិនទាន់ដល់ User]")
 
-# 7. ពាក្យបញ្ជា /stats
+# 7. មុខងារទទួល Join Request ពេលអតិថិជនចុច Link (លោតមក Admin ផ្ទាល់)
+async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    req = update.chat_join_request
+    user = req.from_user
+    chat = req.chat
+    
+    # បង្កើតប៊ូតុង Approve / Decline ឱ្យ Admin ចុចផ្ទាល់
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ យល់ព្រមចូល (Approve)", callback_data=f"accept_req_{chat.id}_{user.id}"),
+            InlineKeyboardButton("❌ បដិសេធ (Decline)", callback_data=f"decline_req_{chat.id}_{user.id}")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    msg_text = (
+        f"📩 **មានអតិថិជនស្នើសុំចូល Channel/Group!**\n\n"
+        f"👤 ឈ្មោះ: {user.first_name} (@{user.username or 'ไม่มี username'})\n"
+        f"🆔 User ID: `{user.id}`\n"
+        f"📍 គ្រុប/ឆានែល: {chat.title}\n\n"
+        f"សូមចុចសម្រេចចិត្តខាងក្រោម៖"
+    )
+    
+    try:
+        await context.bot.send_message(chat_id=ADMIN_ID, text=msg_text, reply_markup=reply_markup, parse_mode="Markdown")
+    except Exception as e:
+        print(f"Error sending join request to admin: {e}")
+
+# 8. ដោះស្រាយពេល Admin ចុច Approve/Decline លើ Join Request តាមប៊ូតុង
+async def join_request_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query.from_user.id != ADMIN_ID:
+        await query.answer("❌ អ្នកមិនមានសិទ្ធិទេ!", show_alert=True)
+        return
+        
+    await query.answer()
+    data = query.data
+    parts = data.split("_")
+    action = parts[0] # accept ឬ decline
+    chat_id = int(parts[2])
+    target_user_id = int(parts[3])
+    
+    try:
+        if action == "accept":
+            await context.bot.approve_chat_join_request(chat_id=chat_id, user_id=target_user_id)
+            await query.edit_message_text(text=f"{query.message.text}\n\n✅ [បានយល់ព្រមឱ្យចូល Channel ជោគជ័យ]")
+            await context.bot.send_message(chat_id=target_user_id, text="🎉 សំណើសុំចូល Channel របស់អ្នកត្រូវបាន Admin យល់ព្រមហើយ! សូមរីករាយកម្សាន្ត។")
+        else:
+            await context.bot.decline_chat_join_request(chat_id=chat_id, user_id=target_user_id)
+            await query.edit_message_text(text=f"{query.message.text}\n\n❌ [បានបដិសេធសំណើ]")
+            await context.bot.send_message(chat_id=target_user_id, text="❌ សំណើសុំចូល Channel របស់អ្នកត្រូវបានបដិសេធ។")
+    except Exception as e:
+        await query.edit_message_text(text=f"{query.message.text}\n\n⚠️ មានបញ្ហាក្នុងការដំណើរការសំណើ៖ {e}")
+
+# 9. ពាក្យបញ្ជា /stats
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -508,7 +570,7 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(msg, parse_mode="Markdown")
 
-# 8. ពាក្យបញ្ជា /status
+# 10. ពាក្យបញ្ជា /status
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     result = None
@@ -531,7 +593,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             days = remaining.days
             hours = remaining.seconds // 3600
             
-            keyboard = [[InlineKeyboardButton("💳 ต่ออายุ / បន្តសមាជិកភាព (Extend)", callback_data="extend_menu")]]
+            keyboard = [[InlineKeyboardButton("💳 បន្ត / បន្តសមាជិកភាព (Extend)", callback_data="extend_menu")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             await update.message.reply_text(
@@ -548,7 +610,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("អ្នកមិនទាន់ជាសមាជិកទេ។ សូមផ្ញើពាក្យ /start ដើម្បីជ្រើសរើសកញ្ចប់សមាជិកភាព។")
 
-# 9. ដោះស្រាយពេល User ចុចប៊ូតុងต่ออายุ (Extend Menu)
+# 11. ដោះស្រាយពេល User ចុចប៊ូតុងបន្ត (Extend Menu)
 async def extend_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -560,7 +622,7 @@ async def extend_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         [InlineKeyboardButton("៣០ ថ្ងៃ - ៦ ដុល្លារ", callback_data="pkg_30")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("📦 សូមជ្រើសរើសកញ្ចប់សម្រាប់ต่ออายุ (Extend)៖", reply_markup=reply_markup)
+    await query.message.reply_text("📦 សូមជ្រើសរើសកញ្ចប់សម្រាប់សេវាកម្ម (Extend)៖", reply_markup=reply_markup)
 
 # Auto-Kick Worker & Warning Check
 def auto_kick_checker(application):
@@ -578,7 +640,7 @@ def auto_kick_checker(application):
                 for row in warn_users:
                     u_id = row[0]
                     try:
-                        keyboard = [[InlineKeyboardButton("💳 ต่ออายุ / បន្តកញ្ចប់ឥឡូវនេះ", callback_data="extend_menu")]]
+                        keyboard = [[InlineKeyboardButton("💳 បន្ត / បន្តកញ្ចប់ឥឡូវនេះ", callback_data="extend_menu")]]
                         reply_markup = InlineKeyboardMarkup(keyboard)
                         application.bot.send_message(
                             chat_id=u_id,
@@ -603,7 +665,7 @@ def auto_kick_checker(application):
                         reply_markup = InlineKeyboardMarkup(keyboard)
                         application.bot.send_message(
                             chat_id=user_id, 
-                            text="⏰ សមាជិកភាពរបស់អ្នកបានផុតកំណត់ហើយ! Bot បានទាត់អ្នកចេញពីគ្រុបដោយស្វ័យប្រវត្តិ។\n\n👉 សូមចុចប៊ូតុងខាងក្រោមដើម្បីបង់ប្រាក់ទិញកញ្ចប់សមាជិកភាពថ្មី។",
+                            text="⏰ សមាជិកភាពរបស់អ្នកបានផុតកំណត់ហើយ! Bot បានទាត់អ្នកចេញពីគ្រុបដោយស្វ័យប្រវត្តិ。\n\n👉 សូមចុចប៊ូតុងខាងក្រោមដើម្បីបង់ប្រាក់ទិញកញ្ចប់សមាជិកភាពថ្មី។",
                             reply_markup=reply_markup
                         )
                     except Exception as e:
@@ -636,8 +698,12 @@ if __name__ == "__main__":
     application.add_handler(CommandHandler("admin_members", admin_members))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(CallbackQueryHandler(button_callback, pattern="^(approve_|reject_|ext_)"))
+    application.add_handler(CallbackQueryHandler(join_request_callback, pattern="^(accept_req_|decline_req_)"))
     application.add_handler(CallbackQueryHandler(package_callback, pattern="^(pkg_|get_referral_link)"))
     application.add_handler(CallbackQueryHandler(extend_menu_callback, pattern="^extend_menu$"))
+    
+    # Handler សម្រាប់ចាប់យករាល់ពេលមានអតិថិជនចុច Request ចូល Channel
+    application.add_handler(ChatJoinRequestHandler(join_request_handler))
     
     application.add_error_handler(error_handler)
     
