@@ -29,7 +29,7 @@ app_web = Flask(__name__)
 
 @app_web.route("/")
 def home():
-    return "Subscription Bot with Cloud PostgreSQL & Advanced Admin Features is running!"
+    return "Subscription Bot with Cloud PostgreSQL & Admin Panel is running!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -235,7 +235,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     photo_file = update.message.photo[-1].file_id
 
-    # Anti-Flood Protection លើការផ្ញើរូបភាព (យ៉ាងតិច ១០ វិនាទីម្តង)
+    # Anti-Flood Protection (យ៉ាងតិច ១០ វិនាទីម្តង)
     now_ts = time.time()
     if user_id != ADMIN_ID:
         last_time = user_last_photo_time.get(user_id, 0)
@@ -254,7 +254,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cursor.close()
             conn.close()
             if receipt_check:
-                await update.message.reply_text("❌ **វិក្កយបត្រ (Slip) ນີ້ត្រូវបានប្រើប្រាស់រួចរាល់ហើយ!**\nប្រព័ន្ធបានរកឃើញថាវិក្កយបត្រនេះធ្លាប់ត្រូវបានបញ្ជូនម្តងរួចមកហើយ សូមកុំយកវិក្កយបត្រចាស់មកផ្ញើសារម្តងទៀត។")
+                await update.message.reply_text("❌ **វិក្កយបត្រ (Slip) នេះត្រូវបានប្រើប្រាស់រួចរាល់ហើយ!**\nប្រព័ន្ធបានរកឃើញថាវិក្កយបត្រនេះធ្លាប់ត្រូវបានបញ្ជូនម្តងរួចមកហើយ សូមកុំយកវិក្កយបត្រចាស់មកផ្ញើសារម្តងទៀត។")
                 return
         except Exception as e:
             print(f"Error checking receipt: {e}")
@@ -297,7 +297,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text("មានបញ្ហាក្នុងការផ្ញើរូបភាព សូមព្យាយាមម្តងទៀត។")
 
-# 6. ប្រព័ន្ធ Admin ចុច Approve, Reject ឬ Extend Days (កត់ត្រា Slip ចូល used_receipts ពេល Approve)
+# 6. ប្រព័ន្ធ Admin ចុច Approve, Reject ឬ Extend Days
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query.from_user.id != ADMIN_ID:
@@ -324,7 +324,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if query.message.photo:
                     photo_file = query.message.photo[-1].file_id if hasattr(query.message, 'photo') else None
                     if photo_file:
-                        # កត់ត្រាទុកថា Slip នេះត្រូវបានប្រើប្រាស់រួចហើយ (ការពារការយកមកប្រើម្តងទៀត)
                         cursor.execute('INSERT INTO used_receipts (photo_file_id, user_id, used_at) VALUES (%s, %s, %s) ON CONFLICT (photo_file_id) DO NOTHING', 
                                        (photo_file, user_id, get_now()))
                 
@@ -413,6 +412,63 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_caption(caption=f"{query.message.caption}\n\n➕ [បានបន្ថែមថ្ងៃជោគជ័យ +{ext_days} ថ្ងៃ]")
         except Exception:
             await query.edit_message_caption(caption=f"{query.message.caption}\n\n➕ [បានបន្ថែមថ្ងៃជោគជ័យ +{ext_days} ថ្ងៃ ប៉ុន្តែផ្ញើសារមិនទាន់ដល់ User]")
+
+# --- មុខងារ Admin Panel Command & Callbacks ---
+async def admin_panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    
+    keyboard = [
+        [InlineKeyboardButton("📊 ស្ថិតិប្រព័ន្ធ (Stats)", callback_data="admin_stats")],
+        [InlineKeyboardButton("📋 បញ្ជីសមាជិកទាំងអស់", callback_data="admin_members_list")],
+        [InlineKeyboardButton("📊 Export ទិន្នន័យ (CSV)", callback_data="admin_export_csv")],
+        [InlineKeyboardButton("ℹ️ វិធីប្រើប្រាស់ Command ផ្សេងៗ", callback_data="admin_help")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("👑 **Admin Control Panel**\n\nសូមជ្រើសរើសមុខងារដែលចង់ត្រួតពិនិត្យខាងក្រោម៖", reply_markup=reply_markup, parse_mode="Markdown")
+
+async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query.from_user.id != ADMIN_ID:
+        await query.answer("❌ អ្នកមិនមានសិទ្ធិទេ!", show_alert=True)
+        return
+        
+    await query.answer()
+    data = query.data
+    
+    if data == "admin_stats":
+        active_users = expired_users = 0
+        conn = get_db_connection()
+        if conn:
+            try:
+                cursor = conn.cursor()
+                now_str = datetime.now(CAMBODIA_TZ).strftime('%Y-%m-%d %H:%M:%S')
+                cursor.execute("SELECT COUNT(*) FROM users WHERE expiry_date >= %s AND kicked = 0", (now_str,))
+                active_users = cursor.fetchone()[0]
+                cursor.execute("SELECT COUNT(*) FROM users WHERE expiry_date < %s", (now_str,))
+                expired_users = cursor.fetchone()[0]
+                cursor.close()
+                conn.close()
+            except Exception as e:
+                print(f"Error: {e}")
+        stats_text = f"📊 **ស្ថិតិប្រព័ន្ធសមាជិកភាព (Admin Dashboard)**\n\n🟢 សមាជិកសកម្ម (Active): **{active_users} នាក់**\n🔴 សមាជិកអស់សុពលភាព (Expired): **{expired_users} នាក់**"
+        await query.message.reply_text(stats_text, parse_mode="Markdown")
+        
+    elif data == "admin_members_list":
+        await admin_members(update, context)
+        
+    elif data == "admin_export_csv":
+        await export_command(update, context)
+        
+    elif data == "admin_help":
+        help_txt = (
+            "ℹ️ **ជំនួយការប្រើប្រាស់ Admin Commands:**\n\n"
+            "• `/broadcast <សារ>` : ផ្ញើសារទៅសមាជិកទាំងអស់\n"
+            "• `/adddays <user_id> <ថ្ងៃ>` : បន្ថែមថ្ងៃឱ្យ User\n"
+            "• `/kickuser <user_id>` : ទាត់ User ចេញពីគ្រុប\n"
+            "• `/setqr` : Reply រូបភាព QR ដើម្បីប្តូរ QR ថ្មី"
+        )
+        await query.message.reply_text(help_txt, parse_mode="Markdown")
 
 # --- មុខងារ Broadcast (ផ្ញើសារជូនដំណឹងទៅសមាជិកទាំងអស់) ---
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -848,6 +904,9 @@ if __name__ == "__main__":
     application.add_handler(CommandHandler("stats", stats))
     application.add_handler(CommandHandler("admin_members", admin_members))
     
+    # Admin Panel Command
+    application.add_handler(CommandHandler("admin", admin_panel_command))
+
     # Extended Commands
     application.add_handler(CommandHandler("broadcast", broadcast_command))
     application.add_handler(CommandHandler("adddays", adddays_command))
@@ -859,6 +918,7 @@ if __name__ == "__main__":
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(CallbackQueryHandler(button_callback, pattern="^(approve_|reject_|ext_)"))
     application.add_handler(CallbackQueryHandler(join_request_callback, pattern="^(accept_req_|decline_req_)"))
+    application.add_handler(CallbackQueryHandler(admin_panel_callback, pattern="^admin_"))
     application.add_handler(CallbackQueryHandler(package_callback, pattern="^(pkg_|get_referral_link)"))
     application.add_handler(CallbackQueryHandler(extend_menu_callback, pattern="^extend_menu$"))
     
@@ -869,5 +929,5 @@ if __name__ == "__main__":
     
     threading.Thread(target=auto_kick_checker, args=(application,), daemon=True).start()
     
-    print("Subscription Bot with Cloud PostgreSQL & Duplicate Receipt Guard is starting...")
+    print("Subscription Bot with Cloud PostgreSQL & Admin Panel is starting...")
     application.run_polling()
