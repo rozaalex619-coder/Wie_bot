@@ -104,7 +104,7 @@ def init_db():
 
 init_db()
 
-# 3. ពាក្យបញ្ជា /start
+# 3. ពាក្យបញ្ជា /start (ម៉ឺនុយមេសម្រាប់អតិថិជន)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
@@ -157,22 +157,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"Error in start query: {e}")
     
     keyboard = [
-        [InlineKeyboardButton("៥ ថ្ងៃ - ២ ដុល្លារ", callback_data="pkg_5")],
-        [InlineKeyboardButton("១០ ថ្ងៃ - ៣ ដុល្លារ", callback_data="pkg_10")],
-        [InlineKeyboardButton("២០ ថ្ងៃ - ៥ ដុល្លារ", callback_data="pkg_20")],
-        [InlineKeyboardButton("៣០ ថ្ងៃ - ៦ ដុល្លារ", callback_data="pkg_30")],
-        [InlineKeyboardButton("👥 យក Link ណែនាំមិត្តភក្តិ (ថែម ១ម៉ោង)", callback_data="get_referral_link")]
+        [InlineKeyboardButton("🛒 ជ្រើសរើសកញ្ចប់សមាជិកភាព", callback_data="user_packages")],
+        [InlineKeyboardButton("📊 ពិនិត្យស្ថានភាពសមាជិកភាព", callback_data="user_check_status")],
+        [InlineKeyboardButton("👥 យក Link ណែនាំមិត្តភក្តិ (ថែម ១ម៉ោង)", callback_data="get_referral_link")],
+        [InlineKeyboardButton("❓ របៀបទូទាត់ប្រាក់", callback_data="user_payment_help")]
     ]
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     welcome_text = (
         f"សួស្តី {user.first_name}!\n\n"
-        f"សូមស្វាគមន៍មកកាន់ប្រព័ន្ធទិញសមាជិកភាពគ្រុបរបស់យើង។ "
-        f"សូមជ្រើសរើសកញ្ចប់សមាជិកភាពនៅខាងក្រោម៖"
+        f"សូមស្វាគមន៍មកកាន់ប្រព័ន្ធទិញសមាជិកភាពគ្រុបរបស់យើង។\n"
+        f"សូមជ្រើសរើសមុខងារដែលអ្នកចង់ប្រើប្រាស់នៅខាងក្រោម៖"
     )
-    await update.message.reply_text(welcome_text, reply_markup=reply_markup)
+    if update.callback_query:
+        await update.callback_query.message.reply_text(welcome_text, reply_markup=reply_markup)
+    else:
+        await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
-# 4. ដោះស្រាយពេលអតិថិជនចុច Package ឬ Referral Link
+# 4. ដោះស្រាយពេលអតិថិជនចុច Package, Status, ឬ Referral Link
 async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -180,7 +182,40 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_id = query.from_user.id
     
-    if data == "get_referral_link":
+    if data == "user_packages":
+        keyboard = [
+            [InlineKeyboardButton("៥ ថ្ងៃ - ២ ដុល្លារ", callback_data="pkg_5")],
+            [InlineKeyboardButton("១០ ថ្ងៃ - ៣ ដុល្លារ", callback_data="pkg_10")],
+            [InlineKeyboardButton("២០ ថ្ងៃ - ៥ ដុល្លារ", callback_data="pkg_20")],
+            [InlineKeyboardButton("៣០ ថ្ងៃ - ៦ ដុល្លារ", callback_data="pkg_30")],
+            [InlineKeyboardButton("⬅️ ត្រឡប់ទៅម៉ឺនុយដើម", callback_data="user_main_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text("📦 សូមជ្រើសរើសកញ្ចប់សមាជិកភាពដែលអ្នកពេញចិត្ត៖", reply_markup=reply_markup)
+        return
+
+    elif data == "user_check_status":
+        await status(update, context)
+        return
+
+    elif data == "user_payment_help":
+        help_text = (
+            "💳 **របៀបទូទាត់ប្រាក់៖**\n\n"
+            "1. ចុចប៊ូតុង **'🛒 ជ្រើសរើសកញ្ចប់សមាជិកភាព'**\n"
+            "2. ជ្រើសរើសកញ្ចប់ចំនួនថ្ងៃដែលចង់បាន\n"
+            "3. ស្កែន QR Code ដែលបង្ហាញនៅលើអេក្រង់ដើម្បីបង់ប្រាក់\n"
+            "4. ថតរូបវិក្កយបត្រ (Screenshot/Slip) រួចផ្ញើចូលក្នុង Bot នេះ\n"
+            "5. Admin នឹងពិនិត្យ និងអនុម័តឱ្យចូលគ្រុបភ្លាមៗ!"
+        )
+        keyboard = [[InlineKeyboardButton("⬅️ ត្រឡប់ទៅម៉ឺនុយដើម", callback_data="user_main_menu")]]
+        await query.message.reply_text(help_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        return
+
+    elif data == "user_main_menu":
+        await start(update, context)
+        return
+
+    elif data == "get_referral_link":
         bot_username = context.bot.username
         ref_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
         await query.message.reply_text(
@@ -470,7 +505,7 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         await query.message.reply_text(help_txt, parse_mode="Markdown")
 
-# --- មុខងារ Broadcast (ផ្ញើសារជូនដំណឹងទៅសមាជិកទាំងអស់) ---
+# --- មុខងារ Broadcast ---
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -506,7 +541,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"✅ Broadcast បានជោគជ័យ!\n- ជោគជ័យ: {success_count} នាក់\n- បរាជ័យ: {fail_count} នាក់")
 
-# --- មុខងារគ្រប់គ្រងសមាជិកផ្ទាល់ពី Admin (Manual Add/Remove User) ---
+# --- មុខងារគ្រប់គ្រងសមាជិកផ្ទាល់ពី Admin ---
 async def adddays_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -578,7 +613,7 @@ async def kickuser_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {e}")
 
-# --- មុខងារកំណត់ ឬដូរ QR Code ទូទាត់ប្រាក់ពីក្នុង Telegram (Dynamic QR Code) ---
+# --- មុខងារកំណត់ ឬដូរ QR Code ទូទាត់ប្រាក់ ---
 async def setqr_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -630,7 +665,8 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bio = io.BytesIO(output.getvalue().encode('utf-8'))
     bio.name = "members_data.csv"
     
-    await update.message.reply_document(document=bio, caption="📊 បញ្ជីទិន្នន័យសមាជិកទាំងអស់ក្នុងប្រព័ន្ធ (CSV Export)")
+    target_message = update.callback_query.message if update.callback_query else update.message
+    await target_message.reply_document(document=bio, caption="📊 បញ្ជីទិន្នន័យសមាជិកទាំងអស់ក្នុងប្រព័ន្ធ (CSV Export)")
 
 # 7. មុខងារទទួល Join Request ពេលអតិថិជនចុច Link
 async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -720,7 +756,8 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
-        await update.message.reply_text(f"❌ អ្នកមិនមែនជា Admin ទេ! (User ID របស់អ្នកគឺ: `{user_id}`)", parse_mode="Markdown")
+        if update.callback_query:
+            await update.callback_query.answer("❌ អ្នកមិនមែនជា Admin ទេ!", show_alert=True)
         return
         
     rows = []
@@ -735,8 +772,10 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"Error fetching admin_members: {e}")
     
+    target_message = update.callback_query.message if update.callback_query else update.message
+    
     if not rows:
-        await update.message.reply_text("📭 មិនទាន់មានទិន្នន័យសមាជិកនៅក្នុងប្រព័ន្ធទេ។")
+        await target_message.reply_text("📭 មិនទាន់មានទិន្នន័យសមាជិកនៅក្នុងប្រព័ន្ធទេ។")
         return
         
     msg = "📋 **បញ្ជីឈ្មោះ កញ្ចប់ តម្លៃ និងថ្ងៃផុតកំណត់សមាជិកទាំងអស់៖**\n\n"
@@ -768,11 +807,11 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     if len(msg) > 4000:
         for x in range(0, len(msg), 4000):
-            await update.message.reply_text(msg[x:x+4000], parse_mode="Markdown")
+            await target_message.reply_text(msg[x:x+4000], parse_mode="Markdown")
     else:
-        await update.message.reply_text(msg, parse_mode="Markdown")
+        await target_message.reply_text(msg, parse_mode="Markdown")
 
-# 10. ពាក្យបញ្ជា /status
+# 10. ពាក្យបញ្ជា /status (ឆែកស្ថានភាពសមាជិក)
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     result = None
@@ -786,6 +825,8 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.close()
         except Exception as e:
             print(f"Error checking status: {e}")
+    
+    target_message = update.callback_query.message if update.callback_query else update.message
     
     if result:
         expiry_str = result[0]
@@ -801,21 +842,21 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = [[InlineKeyboardButton("💳 ต่ออายุ / បន្តសមាជិកភាព (Extend)", callback_data="extend_menu")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            await update.message.reply_text(
+            await target_message.reply_text(
                 f"ស្ថានភាពសមាជិកភាព៖ ដំណើរការធម្មតា ✅\nសល់ពេល៖ {days} ថ្ងៃ និង {hours} ម៉ោងទៀត\nផុតកំណត់នៅ៖ {expiry_str}",
                 reply_markup=reply_markup
             )
         else:
-            keyboard = [[InlineKeyboardButton("💳 ទិញកញ្ចប់សមាជិកភាពใหม่", callback_data="extend_menu")]]
+            keyboard = [[InlineKeyboardButton("💳 ទិញកញ្ចប់សមាជិកភាពថ្មី", callback_data="extend_menu")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text(
+            await target_message.reply_text(
                 f"សមាជិកភាពរបស់អ្នកបានផុតកំណត់ហើយ ❌\nសូមចុចប៊ូតុងខាងក្រោមដើម្បីបន្តសមាជិកភាព។",
                 reply_markup=reply_markup
             )
     else:
-        await update.message.reply_text("អ្នកមិនទាន់ជាសមាជិកទេ។ សូមផ្ញើពាក្យ /start ដើម្បីជ្រើសរើសកញ្ចប់សមាជិកភាព។")
+        await target_message.reply_text("អ្នកមិនទាន់ជាសមាជិកទេ។ សូមផ្ញើពាក្យ /start ដើម្បីជ្រើសរើសកញ្ចប់សមាជិកភាព។")
 
-# 11. ដោះស្រាយពេល User ចុចប៊ូតុងต่ออายุ (Extend Menu)
+# 11. ដោះស្រាយពេល User ចុចប៊ូតុងបន្តសមាជិកភាព (Extend Menu)
 async def extend_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -827,7 +868,7 @@ async def extend_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         [InlineKeyboardButton("៣០ ថ្ងៃ - ៦ ដុល្លារ", callback_data="pkg_30")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("📦 សូមជ្រើសរើសកញ្ចប់សម្រាប់ต่ออายุ (Extend)៖", reply_markup=reply_markup)
+    await query.message.reply_text("📦 សូមជ្រើសរើសកញ្ចប់សម្រាប់បន្តសមាជិកភាព (Extend)៖", reply_markup=reply_markup)
 
 # Auto-Kick Worker & Warning Check (ប្រើម៉ោងកម្ពុជា)
 def auto_kick_checker(application):
@@ -846,7 +887,7 @@ def auto_kick_checker(application):
                 for row in warn_users:
                     u_id = row[0]
                     try:
-                        keyboard = [[InlineKeyboardButton("💳 ต่ออายุ / បន្តកញ្ចប់ឥឡូវនេះ", callback_data="extend_menu")]]
+                        keyboard = [[InlineKeyboardButton("💳 បន្តកញ្ចប់ឥឡូវនេះ", callback_data="extend_menu")]]
                         reply_markup = InlineKeyboardMarkup(keyboard)
                         application.bot.send_message(
                             chat_id=u_id,
@@ -919,7 +960,7 @@ if __name__ == "__main__":
     application.add_handler(CallbackQueryHandler(button_callback, pattern="^(approve_|reject_|ext_)"))
     application.add_handler(CallbackQueryHandler(join_request_callback, pattern="^(accept_req_|decline_req_)"))
     application.add_handler(CallbackQueryHandler(admin_panel_callback, pattern="^admin_"))
-    application.add_handler(CallbackQueryHandler(package_callback, pattern="^(pkg_|get_referral_link)"))
+    application.add_handler(CallbackQueryHandler(package_callback, pattern="^(pkg_|get_referral_link|user_)"))
     application.add_handler(CallbackQueryHandler(extend_menu_callback, pattern="^extend_menu$"))
     
     # Chat Join Request Handler
@@ -929,5 +970,5 @@ if __name__ == "__main__":
     
     threading.Thread(target=auto_kick_checker, args=(application,), daemon=True).start()
     
-    print("Subscription Bot with Cloud PostgreSQL & Admin Panel is starting...")
+    print("Subscription Bot with Cloud PostgreSQL & Interactive Menus is starting...")
     application.run_polling()
