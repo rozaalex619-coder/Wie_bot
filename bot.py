@@ -39,13 +39,14 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 user_selected_package = {}
 user_last_photo_time = {}
+admin_states = {}  # សម្រាប់ទប់ស្កាត់ស្ថានភាពពេល Admin កំពុងវាយបញ្ចូលទិន្នន័យ (Broadcast, Adddays, Kick)
 
 # --------------------------- Flask ---------------------------
 app_web = Flask(__name__)
 
 @app_web.route("/")
 def home():
-    return "Enhanced Subscription Bot with PostgreSQL is running!"
+    return "Interactive Admin Panel Bot is running!"
 
 def run_web():
     port = int(os.getenv("PORT", "10000"))
@@ -143,7 +144,7 @@ def main_keyboard(lang="km"):
             [InlineKeyboardButton("👥 Referral Link (+1 Hour)", callback_data="get_referral_link")],
             [InlineKeyboardButton("🎁 Referral Dashboard", callback_data="referral_dashboard")],
             [InlineKeyboardButton("❓ Payment Guide", callback_data="user_payment_help")],
-            [InlineKeyboardButton("🇰🇭/🇬🇧 Switch Language (ផ្លាស់ប្តូរភាសា)", callback_data="switch_lang")],
+            [InlineKeyboardButton("🇰🇭/🇬🇧 Switch Language", callback_data="switch_lang")],
         ])
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🛒 ជ្រើសរើសកញ្ចប់សមាជិកភាព", callback_data="user_packages")],
@@ -152,6 +153,19 @@ def main_keyboard(lang="km"):
         [InlineKeyboardButton("🎁 ស្ថិតិការណែនាំមិត្តភក្តិ (Referral)", callback_data="referral_dashboard")],
         [InlineKeyboardButton("❓ របៀបទូទាត់ប្រាក់", callback_data="user_payment_help")],
         [InlineKeyboardButton("🇰🇭/🇬🇧 Switch Language", callback_data="switch_lang")],
+    ])
+
+def admin_main_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 ស្ថិតិប្រព័ន្ធ", callback_data="adm_stats"),
+         InlineKeyboardButton("📋 បញ្ជីសមាជិក", callback_data="adm_members")],
+        [InlineKeyboardButton("📜 Admin Audit Logs", callback_data="adm_logs"),
+         InlineKeyboardButton("📤 Export CSV", callback_data="adm_export")],
+        [InlineKeyboardButton("📢 ផ្ញើសារ Broadcast", callback_data="adm_broadcast_prompt"),
+         InlineKeyboardButton("➕ បន្ថែមថ្ងៃ User", callback_data="adm_adddays_prompt")],
+        [InlineKeyboardButton("👢 ដក User ចេញគ្រុប", callback_data="adm_kick_prompt"),
+         InlineKeyboardButton("📸 ប្តូរ QR Code", callback_data="adm_qr_prompt")],
+        [InlineKeyboardButton("🔄 ធ្វើឱ្យស្រស់ (Refresh)", callback_data="adm_panel")]
     ])
 
 def init_db():
@@ -220,7 +234,7 @@ def init_db():
                         created_at TEXT NOT NULL
                     )
                 """)
-        logger.info("Database initialized successfully with all features")
+        logger.info("Database initialized successfully with interactive admin panel")
     except Exception:
         logger.exception("Database initialization failed")
     finally:
@@ -354,7 +368,7 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if data == "user_payment_help":
         help_text = (
-            "💳 របៀបទូទាត់ប្រាក់៖\n\n1. ជ្រើសរើសកញ្ចប់សមាជិកភាព។\n2. ស្កេន QR Code ដើម្បីបង់ប្រាក់។\n3. ផ្ញើរូបវិក្កយបត្រមក Bot នេះ (ប្រព័ន្ធ Auto-Verify នឹងពិនិត្យ)។\n4. រង់ចាំ Admin អនុម័ត។"
+            "💳 របៀបទូទាត់ប្រាក់៖\n\n1. ជ្រើសរើសកញ្ចប់សមាជិកភាព។\n2. ស្កេន QR Code ដើម្បីបង់ប្រាក់។\n3. ផ្ញើរូបវិក្កយបត្រមក Bot នេះ។\n4. រង់ចាំ Admin អនុម័ត។"
             if lang == "km" else
             "💳 Payment Guide:\n\n1. Select a package.\n2. Scan QR Code to pay.\n3. Send your receipt photo to this bot.\n4. Wait for Admin approval."
         )
@@ -399,7 +413,7 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = (
             f"📦 កញ្ចប់៖ {days} ថ្ងៃ ({PACKAGES[days]['price']})\n\n"
             "💳 សូមស្កេន QR Code ដើម្បីទូទាត់ប្រាក់។\n"
-            "📸 បន្ទាប់ពីបង់ប្រាក់ សូមផ្ញើរូបវិក្កយបត្រមក Bot នេះ (Auto-Verify System)។"
+            "📸 បន្ទាប់ពីបង់ប្រាក់ សូមផ្ញើរូបវិក្កយបត្រមក Bot នេះ។"
             if lang == "km" else
             f"📦 Package: {days} Days ({PACKAGES[days]['price']})\n\n"
             "💳 Please scan QR Code to pay.\n"
@@ -416,12 +430,24 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(caption + "\n\n⚠️ មិនអាចបង្ហាញ QR Code បានទេ។ សូមទាក់ទង Admin។")
 
 
-# ------------------------- Receipt flow (Auto Verify) ----------------
+# ------------------------- Receipt flow ----------------------
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user or not update.message or not update.message.photo:
         return
     user_id = user.id
+    
+    # Check if admin is sending QR code update
+    if is_admin(user_id) and admin_states.get(user_id) == "waiting_qr":
+        db_execute("""
+            INSERT INTO bot_settings (key, value) VALUES ('custom_qr_file_id', %s)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+        """, (update.message.photo[-1].file_id,))
+        admin_states.pop(user_id, None)
+        log_admin_action(user_id, "SET_QR", "Updated custom QR code via photo")
+        await update.message.reply_text("✅ បានប្តូរ QR Code ថ្មីជោគជ័យ!", reply_markup=admin_main_keyboard())
+        return
+
     lang = get_user_lang(user_id)
     if user_id not in user_selected_package:
         await update.message.reply_text(
@@ -454,9 +480,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             with conn.cursor() as cur:
                 cur.execute("SELECT status FROM payment_requests WHERE photo_unique_id = %s", (unique_id,))
                 if cur.fetchone():
-                    await update.message.reply_text(
-                        "❌ រូបវិក្កយបត្រនេះត្រូវបានផ្ញើរួចហើយ (Duplicate Receipt Detected)." if lang == "km" else "❌ This receipt has already been submitted."
-                    )
+                    await update.message.reply_text("❌ រូបវិក្កយបត្រនេះត្រូវបានផ្ញើរួចហើយ។")
                     return
                 cur.execute("""
                     INSERT INTO payment_requests
@@ -484,21 +508,72 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_photo(
             chat_id=ADMIN_ID, photo=file_id,
             caption=(
-                "🔔 សំណើទូទាត់ថ្មី (Auto-Checked)\n\n"
+                "🔔 សំណើទូទាត់ថ្មី\n\n"
                 f"👤 ឈ្មោះ៖ {username}\n🆔 User ID៖ {user_id}\n"
-                f"📦 កញ្ចប់៖ {PACKAGES[days]['label']}\n🧾 Receipt key៖ {unique_id}\n\n"
-                "⚠️ សូមពិនិត្យប្រាក់ចូល ABA/Bakong មុនចុច Approve។"
+                f"📦 កញ្ចប់៖ {PACKAGES[days]['label']}\n🧾 Receipt key៖ {unique_id}"
             ),
             reply_markup=keyboard,
         )
-        await update.message.reply_text(
-            "📥 បានបញ្ជូនវិក្កយបត្រទៅប្រព័ន្ធ Auto-Verify និង Admin រួចរាល់។ សូមរង់ចាំការពិនិត្យ។"
-            if lang == "km" else
-            "📥 Receipt submitted for verification. Please wait."
-        )
+        await update.message.reply_text("📥 បានបញ្ជូនវិក្កយបត្រទៅ Admin រួចរាល់។ សូមរង់ចាំការពិនិត្យ។")
     except TelegramError:
         logger.exception("Could not send receipt to admin")
         await update.message.reply_text("❌ Could not send receipt to admin.")
+
+
+# ------------------ Text Message Handler (Admin prompts) -----
+async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not user or not is_admin(user.id):
+        return
+    
+    admin_id = user.id
+    state = admin_states.get(admin_id)
+    text = update.message.text.strip()
+
+    if state == "waiting_broadcast":
+        admin_states.pop(admin_id, None)
+        rows = db_execute("SELECT user_id FROM users", fetchall=True)
+        ok = failed = 0
+        for (uid,) in rows:
+            try:
+                await context.bot.send_message(uid, f"📢 សេចក្តីជូនដំណឹង៖\n\n{text}")
+                ok += 1
+                await asyncio.sleep(0.05)
+            except TelegramError:
+                failed += 1
+        log_admin_action(admin_id, "BROADCAST", f"Success: {ok}, Failed: {failed}")
+        await update.message.reply_text(f"✅ Broadcast រួចរាល់!\nជោគជ័យ៖ {ok}\nបរាជ័យ៖ {failed}", reply_markup=admin_main_keyboard())
+
+    elif state == "waiting_adddays":
+        admin_states.pop(admin_id, None)
+        parts = text.split()
+        if len(parts) != 2:
+            await update.message.reply_text("❌ ទម្រង់មិនត្រឹមត្រូវ។ សូមវាយជាឧទាហរណ៍៖ `123456789 10`", parse_mode="Markdown", reply_markup=admin_main_keyboard())
+            return
+        try:
+            uid, days = int(parts[0]), int(parts[1])
+        except ValueError:
+            await update.message.reply_text("❌ User ID និង Days ត្រូវតែជាលេខ។", reply_markup=admin_main_keyboard())
+            return
+        expiry = await add_membership_days(uid, days, f"Admin បន្ថែម {days}ថ្ងៃ")
+        log_admin_action(admin_id, "ADD_DAYS_PROMPT", f"User: {uid}, Days: {days}")
+        await update.message.reply_text(f"✅ បានបន្ថែម {days} ថ្ងៃដល់ User `{uid}`។ ផុតកំណត់៖ {expiry}", parse_mode="Markdown", reply_markup=admin_main_keyboard())
+        try:
+            await context.bot.send_message(uid, f"✨ Admin បានបន្ថែម {days} ថ្ងៃ។ ផុតកំណត់៖ {expiry}")
+        except TelegramError:
+            pass
+
+    elif state == "waiting_kick":
+        admin_states.pop(admin_id, None)
+        try:
+            uid = int(text)
+            await context.bot.ban_chat_member(chat_id=GROUP_CHAT_ID, user_id=uid)
+            await context.bot.unban_chat_member(chat_id=GROUP_CHAT_ID, user_id=uid)
+            db_execute("UPDATE users SET kicked = 1 WHERE user_id = %s", (uid,))
+            log_admin_action(admin_id, "KICK_USER_PROMPT", f"User: {uid}")
+            await update.message.reply_text(f"✅ បានដក User `{uid}` ចេញពីគ្រុបជោគជ័យ។", parse_mode="Markdown", reply_markup=admin_main_keyboard())
+        except Exception:
+            await update.message.reply_text("❌ កំហុស៖ មិនអាចដក User នេះបានទេ។ សូមពិនិត្យ User ID ម្តងទៀត។", reply_markup=admin_main_keyboard())
 
 
 # ------------------ Secure private invite --------------------
@@ -627,7 +702,7 @@ async def add_membership_days(user_id, days, note):
         conn.close()
 
 
-# --------------------- Admin receipt actions -----------------
+# --------------------- Admin receipt & panel actions ---------
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not is_admin(query.from_user.id):
@@ -636,6 +711,47 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data
 
+    # Interactive Admin Panel Button Routing
+    if data == "adm_panel":
+        await query.message.edit_text("👑 **Admin Control Panel**\n\nសូមជ្រើសរើសមុខងារខាងក្រោម៖", reply_markup=admin_main_keyboard(), parse_mode="Markdown")
+        return
+    elif data == "adm_stats":
+        await stats_action(query)
+        return
+    elif data == "adm_members":
+        await admin_members_action(query)
+        return
+    elif data == "adm_logs":
+        logs = db_execute("SELECT admin_id, action_type, details, created_at FROM admin_logs ORDER BY id DESC LIMIT 15", fetchall=True)
+        if not logs:
+            await query.message.reply_text("គ្មានទិន្នន័យ Audit Logs ទេ។", reply_markup=admin_main_keyboard())
+            return
+        msg = ["📜 **Recent Admin Audit Logs:**"]
+        for aid, action, details, time in logs:
+            msg.append(f"• [{time}] Admin `{aid}`: **{action}** ({details})")
+        await query.message.reply_text("\n".join(msg), parse_mode="Markdown", reply_markup=admin_main_keyboard())
+        return
+    elif data == "adm_export":
+        await export_action(query, context)
+        return
+    elif data == "adm_broadcast_prompt":
+        admin_states[query.from_user.id] = "waiting_broadcast"
+        await query.message.reply_text("📢 **Broadcast Mode**\n\nសូមផ្ញើសារដែលអ្នកចង់ Broadcast ទៅកាន់សមាជិកទាំងអស់៖", parse_mode="Markdown")
+        return
+    elif data == "adm_adddays_prompt":
+        admin_states[query.from_user.id] = "waiting_adddays"
+        await query.message.reply_text("➕ **Add Days Mode**\n\nសូមផ្ញើ User ID និងចំនួនថ្ងៃមក (ឧទាហរណ៍៖ `123456789 15`)៖", parse_mode="Markdown")
+        return
+    elif data == "adm_kick_prompt":
+        admin_states[query.from_user.id] = "waiting_kick"
+        await query.message.reply_text("👢 **Kick User Mode**\n\nសូមផ្ញើ Telegram User ID ដែលត្រូវដកចេញពីគ្រុប៖", parse_mode="Markdown")
+        return
+    elif data == "adm_qr_prompt":
+        admin_states[query.from_user.id] = "waiting_qr"
+        await query.message.reply_text("📸 **Change QR Code Mode**\n\nសូមផ្ញើរូបភាព QR Code ថ្មីមកកាន់ Chat នេះ៖")
+        return
+
+    # Receipt Approvals & Extensions
     if data.startswith("approve_"):
         parts = data.split("_", 3)
         if len(parts) != 4:
@@ -776,7 +892,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 
-# -------------------------- Status ---------------------------
+# -------------------------- Status & Panel Actions -----------
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user:
@@ -813,122 +929,12 @@ async def extend_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.callback_query.message.reply_text("📦 សូមជ្រើសរើសកញ្ចប់៖", reply_markup=package_keyboard(lang))
 
 
-# ----------------------- Admin panel -------------------------
 async def admin_panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📊 ស្ថិតិប្រព័ន្ធ", callback_data="admin_stats")],
-        [InlineKeyboardButton("📋 បញ្ជីសមាជិក", callback_data="admin_members_list")],
-        [InlineKeyboardButton("📜 Admin Audit Logs", callback_data="admin_audit_logs")],
-        [InlineKeyboardButton("📤 Export CSV", callback_data="admin_export_csv")],
-        [InlineKeyboardButton("ℹ️ ជំនួយ", callback_data="admin_help")],
-    ])
-    await update.message.reply_text("👑 Admin Control Panel (Enhanced)", reply_markup=keyboard)
+    await update.message.reply_text("👑 **Admin Control Panel**\n\nសូមជ្រើសរើសមុខងារខាងក្រោម៖", reply_markup=admin_main_keyboard(), parse_mode="Markdown")
 
-async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if not is_admin(query.from_user.id):
-        await query.answer("❌ Unauthorized.", show_alert=True)
-        return
-    await query.answer()
-    if query.data == "admin_stats":
-        await stats(update, context)
-    elif query.data == "admin_members_list":
-        await admin_members(update, context)
-    elif query.data == "admin_audit_logs":
-        logs = db_execute("SELECT admin_id, action_type, details, created_at FROM admin_logs ORDER BY id DESC LIMIT 15", fetchall=True)
-        if not logs:
-            await query.message.reply_text("គ្មានទិន្នន័យ Audit Logs ទេ។")
-            return
-        msg = ["📜 **Recent Admin Audit Logs:**"]
-        for aid, action, details, time in logs:
-            msg.append(f"• [{time}] Admin `{aid}`: **{action}** ({details})")
-        await query.message.reply_text("\n".join(msg))
-    elif query.data == "admin_export_csv":
-        await export_command(update, context)
-    elif query.data == "admin_help":
-        await query.message.reply_text(
-            "Commands:\n/broadcast\n/adddays USER_ID DAYS\n/kickuser USER_ID\n/setqr\n/export"
-        )
-
-async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-    message_text = " ".join(context.args).strip()
-    if not message_text:
-        await update.message.reply_text("ប្រើ៖ /broadcast សារ")
-        return
-    rows = db_execute("SELECT user_id FROM users", fetchall=True)
-    ok = failed = 0
-    for (uid,) in rows:
-        try:
-            await context.bot.send_message(uid, f"📢 សេចក្តីជូនដំណឹង៖\n\n{message_text}")
-            ok += 1
-            await asyncio.sleep(0.05)
-        except TelegramError:
-            failed += 1
-    log_admin_action(update.effective_user.id, "BROADCAST", f"Success: {ok}, Failed: {failed}")
-    await update.message.reply_text(f"Broadcast Completed. Success: {ok}, Failed: {failed}")
-
-async def adddays_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-    if len(context.args) < 2:
-        await update.message.reply_text("ប្រើ៖ /adddays USER_ID DAYS")
-        return
-    try:
-        uid, days = int(context.args[0]), int(context.args[1])
-    except ValueError:
-        return
-    expiry = await add_membership_days(uid, days, f"Admin បន្ថែម {days}ថ្ងៃ")
-    log_admin_action(update.effective_user.id, "ADD_DAYS_CMD", f"User: {uid}, Days: {days}")
-    await update.message.reply_text(f"✅ បានបន្ថែម {days} ថ្ងៃដល់ {uid}។ ផុតកំណត់៖ {expiry}")
-
-async def kickuser_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-    if not context.args:
-        return
-    try:
-        uid = int(context.args[0])
-        await context.bot.ban_chat_member(chat_id=GROUP_CHAT_ID, user_id=uid)
-        await context.bot.unban_chat_member(chat_id=GROUP_CHAT_ID, user_id=uid)
-        db_execute("UPDATE users SET kicked = 1 WHERE user_id = %s", (uid,))
-        log_admin_action(update.effective_user.id, "KICK_USER", f"User: {uid}")
-        await update.message.reply_text(f"✅ បានដក User {uid} ចេញ។")
-    except Exception:
-        await update.message.reply_text("❌ កំហុសក្នុងការដក User ចេញ។")
-
-async def setqr_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-    reply = update.message.reply_to_message
-    if not reply or not reply.photo:
-        await update.message.reply_text("សូម Reply រូប QR Code ថ្មី រួចវាយ /setqr")
-        return
-    db_execute("""
-        INSERT INTO bot_settings (key, value) VALUES ('custom_qr_file_id', %s)
-        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-    """, (reply.photo[-1].file_id,))
-    log_admin_action(update.effective_user.id, "SET_QR", "Updated custom QR code")
-    await update.message.reply_text("✅ បានប្តូរ QR Code ជោគជ័យ។")
-
-async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-    rows = db_execute("SELECT user_id, username, expiry_date, kicked, warned, package_info FROM users ORDER BY user_id", fetchall=True)
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["User ID", "Username", "Expiry Date", "Kicked", "Warned", "Package Info"])
-    writer.writerows(rows)
-    file_obj = io.BytesIO(("\ufeff" + output.getvalue()).encode("utf-8"))
-    file_obj.name = "members_data.csv"
-    await target_message(update).reply_document(document=file_obj, caption="📊 ទិន្នន័យសមាជិក (CSV)")
-
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
+async def stats_action(query):
     rows = db_execute("SELECT expiry_date, kicked FROM users", fetchall=True)
     active = expired = 0
     now = now_dt()
@@ -938,14 +944,12 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             expired += 1
         else:
             active += 1
-    await target_message(update).reply_text(f"📊 ស្ថិតិប្រព័ន្ធ\n\n🟢 សកម្ម៖ {active}\n🔴 ផុតកំណត់៖ {expired}")
+    await query.message.reply_text(f"📊 ស្ថិតិប្រព័ន្ធ\n\n🟢 សកម្ម៖ {active}\n🔴 ផុតកំណត់៖ {expired}", reply_markup=admin_main_keyboard())
 
-async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
+async def admin_members_action(query):
     rows = db_execute("SELECT user_id, username, expiry_date, kicked, package_info FROM users ORDER BY user_id", fetchall=True)
     if not rows:
-        await target_message(update).reply_text("មិនទាន់មានសមាជិកទេ។")
+        await query.message.reply_text("មិនទាន់មានសមាជិកទេ។", reply_markup=admin_main_keyboard())
         return
     now = now_dt()
     lines = ["📋 បញ្ជីសមាជិក៖"]
@@ -956,11 +960,21 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chunk = ""
     for line in lines:
         if len(chunk) + len(line) > 3500:
-            await target_message(update).reply_text(chunk)
+            await query.message.reply_text(chunk)
             chunk = ""
         chunk += line + "\n"
     if chunk:
-        await target_message(update).reply_text(chunk)
+        await query.message.reply_text(chunk, reply_markup=admin_main_keyboard())
+
+async def export_action(query, context):
+    rows = db_execute("SELECT user_id, username, expiry_date, kicked, warned, package_info FROM users ORDER BY user_id", fetchall=True)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["User ID", "Username", "Expiry Date", "Kicked", "Warned", "Package Info"])
+    writer.writerows(rows)
+    file_obj = io.BytesIO(("\ufeff" + output.getvalue()).encode("utf-8"))
+    file_obj.name = "members_data.csv"
+    await context.bot.send_document(chat_id=query.from_user.id, document=file_obj, caption="📊 ទិន្នន័យសមាជិក (CSV)")
 
 
 # --------------------- Expiry background job -----------------
@@ -1036,23 +1050,19 @@ def main():
         raise RuntimeError("BOT_TOKEN environment variable is not set")
     application = ApplicationBuilder().token(token).build()
 
+    # Handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("status", status))
-    application.add_handler(CommandHandler("stats", stats))
-    application.add_handler(CommandHandler("admin_members", admin_members))
     application.add_handler(CommandHandler("admin", admin_panel_command))
-    application.add_handler(CommandHandler("broadcast", broadcast_command))
-    application.add_handler(CommandHandler("adddays", adddays_command))
-    application.add_handler(CommandHandler("kickuser", kickuser_command))
-    application.add_handler(CommandHandler("setqr", setqr_command))
-    application.add_handler(CommandHandler("export", export_command))
 
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
     application.add_handler(ChatJoinRequestHandler(handle_chat_join_request))
-    application.add_handler(CallbackQueryHandler(button_callback, pattern=r"^(approve_|reject_|ext_)"))
-    application.add_handler(CallbackQueryHandler(admin_panel_callback, pattern=r"^admin_"))
+    
+    application.add_handler(CallbackQueryHandler(button_callback, pattern=r"^(approve_|reject_|ext_|adm_)"))
     application.add_handler(CallbackQueryHandler(package_callback, pattern=r"^(pkg_|get_referral_link|user_|switch_lang|referral_dashboard)"))
     application.add_handler(CallbackQueryHandler(extend_menu_callback, pattern=r"^extend_menu$"))
+    
     application.add_error_handler(error_handler)
 
     if application.job_queue:
@@ -1060,7 +1070,7 @@ def main():
     else:
         logger.warning("JobQueue unavailable.")
 
-    logger.info("Enhanced Subscription bot starting")
+    logger.info("Interactive Admin Panel Bot starting")
     application.run_polling()
 
 if __name__ == "__main__":
