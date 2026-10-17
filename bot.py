@@ -61,8 +61,21 @@ init_db()
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
+    username = user.username or user.first_name
     
-    # ពិនិត្យមើលថាតើ User ធ្លាប់បានយក Free Trial រួចហើយឬยัง
+    conn = sqlite3.connect('subscriptions.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT free_claimed, expiry_date FROM users WHERE user_id = ?', (user_id,))
+    result = cursor.fetchone()
+    
+    if not result:
+        cursor.execute('''
+            INSERT INTO users (user_id, username, expiry_date, kicked, free_claimed, warned, package_info)
+            VALUES (?, ?, ?, 0, 0, 0, 'មិនទាន់ជ្រើសរើសកញ្ចប់')
+        ''', (user_id, username, (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')))
+        conn.commit()
+    conn.close()
+    
     conn = sqlite3.connect('subscriptions.db')
     cursor = conn.cursor()
     cursor.execute('SELECT free_claimed FROM users WHERE user_id = ?', (user_id,))
@@ -71,7 +84,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = []
     
-    # បើមិនទាន់មានក្នុង Database ឬមិនទាន់បាន Claim Free Trial ទេ បង្ហាញប៊ូតុង Free Trial
+    # បង្ហាញប៊ូតុង Free Trial សម្រាប់តែអ្នកដែលមិនទាន់ធ្លាប់យកសោះ (free_claimed == 0)
     if not result or result[0] == 0:
         keyboard.append([InlineKeyboardButton("🎁 សាកល្បងប្រើប្រាស់បានចំនួន១ ថ្ងៃ (Free Trial)", callback_data="claim_free")])
     
@@ -109,7 +122,7 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if result and result[0] == 1:
             conn.close()
-            await query.message.reply_text("❌ អ្នកបានប្រើប្រាស់សិទ្ធិសាកល្បងអស់ចំនួន ១ ថ្ងៃរួចរាល់ហើយ!")
+            await query.message.reply_text("❌ អ្នកបានប្រើប្រាស់សិទ្ធិសាកល្បងអស់ចំនួន ១ ថ្ងៃរួចរាល់ហើយ! (មិនអាចយកម្តងទៀតបានទេ)")
             return
             
         # កំណត់ថ្ងៃផុតកំណត់ ១ ថ្ងៃក្រោយ
@@ -118,9 +131,8 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         package_desc = "១ ថ្ងៃ - 0 ដុល្លារ (Free Trial)"
         
         cursor.execute('''
-            INSERT OR REPLACE INTO users (user_id, username, expiry_date, kicked, free_claimed, warned, package_info) 
-            VALUES (?, ?, ?, ?, ?, 0, ?)
-        ''', (user_id, username, expiry, 0, 1, package_desc))
+            UPDATE users SET username = ?, expiry_date = ?, kicked = 0, free_claimed = 1, warned = 0, package_info = ? WHERE user_id = ?
+        ''', (username, expiry, package_desc, user_id))
         conn.commit()
         conn.close()
         
@@ -209,9 +221,15 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text("មានបញ្ហាក្នុងការផ្ញើរូបភាព សូមព្យាយាមម្តងទៀត។")
 
-# 6. ប្រព័ន្ធ Admin ចុច Approve, Reject ឬ Extend Days (មុខងារទី ៣ និង ៥)
+# 6. ប្រព័ន្ធ Admin ចុច Approve, Reject ឬ Extend Days (មុខងារទី ៣ និង ៥) - បន្ថែមសុវត្ថិភាពផ្ទៀងផ្ទាត់ Admin ID
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    
+    # 🔒 ការពារសុវត្ថិភាព៖ ផ្ទៀងផ្ទាត់ថាមានតែ Admin ទេដែលចុចប៊ូតុងទាំងនេះបាន
+    if query.from_user.id != ADMIN_ID:
+        await query.answer("❌ អ្នកមិនមានសិទ្ធិអនុវត្តមុខងារនេះទេ!", show_alert=True)
+        return
+        
     await query.answer()
     
     data = query.data
@@ -291,9 +309,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         new_pkg = f"{old_pkg} + បន្ថែម {ext_days}ថ្ងៃ"
         
         cursor.execute('''
-            INSERT OR REPLACE INTO users (user_id, username, expiry_date, kicked, free_claimed, warned, package_info) 
-            VALUES (?, ?, ?, 0, 1, 0, ?)
-        ''', (user_id, "Customer", new_expiry, new_pkg))
+            UPDATE users SET expiry_date = ?, kicked = 0, package_info = ? WHERE user_id = ?
+        ''', (new_expiry, new_pkg, user_id))
         conn.commit()
         conn.close()
         
@@ -303,7 +320,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await query.edit_message_caption(caption=f"{query.message.caption}\n\n➕ [បានបន្ថែមថ្ងៃជោគជ័យ +{ext_days} ថ្ងៃ ប៉ុន្តែផ្ញើសារមិនទាន់ដល់ User]")
 
-# 7. មុខងារទី ៤៖ ពាក្យបញ្ជា /stats សម្រាប់ Admin មើលស្ថិតិសមាជិក (រួមបញ្ចូលការរាប់ចំនួន Free Trial)
+# 7. មុខងារទី ៤៖ ពាក្យបញ្ជា /stats សម្រាប់ Admin មើលស្ថិតិសមាជិក
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -332,7 +349,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(stats_text, parse_mode="Markdown")
 
-# 🆕 មុខងារថ្មីសម្រាប់ Admin៖ មើលបញ្ជីសមាជិកទាំងអស់ ឈ្មោះ វិន័យកញ្ចប់ និងចំនួនថ្ងៃដែលនៅសល់
+# 🆕 មុខងារថ្មីសម្រាប់ Admin៖ មើលបញ្ជីសមាជិក ឈ្មោះ កញ្ចប់/តម្លៃ និងថ្ងៃផុតកំណត់ច្បាស់លាស់
 async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -349,7 +366,7 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📭 មិនទាន់មានទិន្នន័យសមាជិកនៅក្នុងប្រព័ន្ធទេ។")
         return
         
-    msg = "📋 **បញ្ជីឈ្មោះ វិន័យកញ្ចប់ និងស្ថានភាពសមាជិកទាំងអស់៖**\n\n"
+    msg = "📋 **បញ្ជីឈ្មោះ កញ្ចប់ តម្លៃ និងថ្ងៃផុតកំណត់សមាជិកទាំងអស់៖**\n\n"
     now = datetime.now()
     
     for row in rows:
@@ -359,7 +376,7 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pkg_desc = package_info if package_info else "មិនមានទិន្នន័យ"
         
         if kicked == 1:
-            status_text = "🔴 បានទាត់ចេញ (Expired/Kicked)"
+            status_text = f"🔴 បានទាត់ចេញ | ផុតកំណត់ថ្ងៃ៖ {exp_str}"
         else:
             try:
                 exp_date = datetime.strptime(exp_str, '%Y-%m-%d %H:%M:%S')
@@ -367,13 +384,13 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     rem = exp_date - now
                     days = rem.days
                     hours = rem.seconds // 3600
-                    status_text = f"🟢 សកម្ម (សល់ {days} ថ្ងៃ និង {hours} ម៉ោង)"
+                    status_text = f"🟢 សកម្ម (សល់ {days} ថ្ងៃ និង {hours} ម៉ោង) | ផុតកំណត់៖ {exp_str}"
                 else:
-                    status_text = "🔴 ផុតកំណត់ហើយ"
+                    status_text = f"🔴 ផុតកំណត់ហើយ | កាលបរិច្ឆេទ៖ {exp_str}"
             except Exception:
                 status_text = f"📅 ផុតកំណត់ថ្ងៃ៖ {exp_str}"
                 
-        msg += f"👤 ឈ្មោះ: **{name}** {badge}\n🆔 ID: `{u_id}`\n📦 កញ្ចប់: **{pkg_desc}**\n⏳ ស្ថានភាព: {status_text}\n----------------------------------\n"
+        msg += f"👤 ឈ្មោះ: **{name}** {badge}\n🆔 ID: `{u_id}`\n📦 កញ្ចប់/តម្លៃ: **{pkg_desc}**\n⏳ ស្ថានភាព: {status_text}\n----------------------------------\n"
         
     if len(msg) > 4000:
         for x in range(0, len(msg), 4000):
@@ -459,7 +476,14 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     print(f"Update {update} caused error {context.error}")
 
 if __name__ == "__main__":
-    application = ApplicationBuilder().token("8907453817:AAGqGpbWJzbWXFt1Vqcgso9ytQmwFiih0zc").build()
+    # 🔒 ការពារសុវត្ថិភាព៖ ទាញយក Bot Token ពី Environment Variable (BOT_TOKEN)
+    BOT_TOKEN = os.environ.get("BOT_TOKEN")
+    
+    if not BOT_TOKEN:
+        print("Error: BOT_TOKEN environment variable is not set!")
+        exit(1)
+        
+    application = ApplicationBuilder().token(BOT_TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("status", status))
