@@ -44,7 +44,7 @@ def get_db_connection():
 # រក្សាទុកកញ្ចប់ដែល User បានជ្រើសរើសបណ្តោះអាសន្ន
 user_selected_package = {}
 
-# 2. បង្កើត Database Tables លើ Cloud PostgreSQL (បន្ថែម referral_code និង referred_by)
+# 2. បង្កើត Database Tables លើ Cloud PostgreSQL
 def init_db():
     conn = get_db_connection()
     if conn is None:
@@ -60,9 +60,7 @@ def init_db():
                 kicked INTEGER DEFAULT 0,
                 free_claimed INTEGER DEFAULT 0,
                 warned INTEGER DEFAULT 0,
-                package_info TEXT DEFAULT 'មិនមាន',
-                referral_code TEXT,
-                referred_by BIGINT
+                package_info TEXT DEFAULT 'មិនមាន'
             )
         ''')
         cursor.execute('''
@@ -81,24 +79,12 @@ def init_db():
 
 init_db()
 
-# 3. ពាក្យបញ្ជា /start (รองรับ Referral Link เช่น /start ref_123456789)
+# 3. ពាក្យបញ្ជា /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
     username = user.username or user.first_name
     
-    # ពិនិត្យមើល Referral Argument
-    args = context.args
-    referrer_id = None
-    if args and args[0].startswith("ref_"):
-        try:
-            ref_id_str = args[0].split("_")[1]
-            potential_referrer = int(ref_id_str)
-            if potential_referrer != user_id:
-                referrer_id = potential_referrer
-        except Exception:
-            pass
-
     conn = get_db_connection()
     result = None
     if conn:
@@ -109,28 +95,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if not result:
                 default_expiry = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
-                ref_code = f"ref_{user_id}"
-                
-                # បើមានคนแนะนำ ឱ្យโบนัสเพิ่ม ၂ ថ្ងៃដល់ผู้แนะนำทันที
-                if referrer_id:
-                    cursor.execute('SELECT expiry_date FROM users WHERE user_id = %s', (referrer_id,))
-                    ref_res = cursor.fetchone()
-                    if ref_res:
-                        try:
-                            ref_exp = datetime.strptime(ref_res[0], '%Y-%m-%d %H:%M:%S')
-                            now = datetime.now()
-                            base_time = ref_exp if ref_exp > now else now
-                            new_ref_exp = (base_time + timedelta(days=2)).strftime('%Y-%m-%d %H:%M:%S')
-                            cursor.execute('UPDATE users SET expiry_date = %s WHERE user_id = %s', (new_ref_exp, referrer_id))
-                            # ផ្ញើសារប្រាប់ผู้แนะนำ
-                            await context.bot.send_message(chat_id=referrer_id, text="🎁 មានមិត្តភក្តិបានចូលប្រើប្រាស់ Bot តាមរយៈ Link របស់អ្នក! អ្នកទទួលបានការថែមជូន ២ ថ្ងៃដោយស្វ័យប្រវត្តិ។")
-                        except Exception as e:
-                            print(f"Error giving referral bonus: {e}")
-
                 cursor.execute('''
-                    INSERT INTO users (user_id, username, expiry_date, kicked, free_claimed, warned, package_info, referral_code, referred_by)
-                    VALUES (%s, %s, %s, 0, 0, 0, 'មិនទាន់ជ្រើសរើសកញ្ចប់', %s, %s)
-                ''', (user_id, username, default_expiry, f"ref_{user_id}", referrer_id))
+                    INSERT INTO users (user_id, username, expiry_date, kicked, free_claimed, warned, package_info)
+                    VALUES (%s, %s, %s, 0, 0, 0, 'មិនទាន់ជ្រើសរើសកញ្ចប់')
+                ''', (user_id, username, default_expiry))
                 conn.commit()
             
             cursor.execute('SELECT free_claimed FROM users WHERE user_id = %s', (user_id,))
@@ -148,8 +116,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("៥ ថ្ងៃ - ២ ដុល្លារ", callback_data="pkg_5")],
         [InlineKeyboardButton("១០ ថ្ងៃ - ៣ ដុល្លារ", callback_data="pkg_10")],
         [InlineKeyboardButton("២០ ថ្ងៃ - ៥ ដុល្លារ", callback_data="pkg_20")],
-        [InlineKeyboardButton("៣០ ថ្ងៃ - ៦ ដុល្លារ", callback_data="pkg_30")],
-        [InlineKeyboardButton("👥 យក Link Referral (ថែម ២ ថ្ងៃ)", callback_data="get_referral_link")]
+        [InlineKeyboardButton("៣០ ថ្ងៃ - ៦ ដុល្លារ", callback_data="pkg_30")]
     ])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -160,7 +127,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
-# 4. ដោះស្រាយពេលអតិថិជនចុចយក Free Trial, Package ឬ Referral Link
+# 4. ដោះស្រាយពេលអតិថិជនចុចយក Free Trial ឬកញ្ចប់បង់ប្រាក់
 async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -168,17 +135,6 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_id = query.from_user.id
     
-    if data == "get_referral_link":
-        bot_username = context.bot.username
-        ref_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
-        await query.message.reply_text(
-            f"🔗 **តំណភ្ជាប់ណែនាំមិត្តភក្តិ (Referral Link) របស់អ្នក៖**\n\n"
-            f"`{ref_link}`\n\n"
-            f"💡 **អត្ថប្រយោជន៍៖** ពេលមានមិត្តភក្តិចុចចូលតាម Link នេះ អ្នកនឹងទទួលបានការថែមជូន **២ ថ្ងៃ** ចូលក្នុងសមាជិកភាពរបស់អ្នកដោយស្វ័យប្រវត្តិ!",
-            parse_mode="Markdown"
-        )
-        return
-
     if data == "claim_free":
         conn = get_db_connection()
         if not conn:
@@ -212,7 +168,7 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         success_message = (
-            f"🎉 អបអរសាទរ! អ្នកទទួលបានសិទ្ធិសាកល្បងចំនួន ១ ថ្ងៃជោគជ័យ。\n\n"
+            f"🎉 អបអរសាទរ! អ្នកទទួលបានសិទ្ធិសាកល្បងចំនួន ១ ថ្ងៃជោគជ័យ។\n\n"
             f"🔗 តំណភ្ជាប់ចូលគ្រុប (Group Link):\n{GROUP_INVITE_LINK}\n\n"
             f"📅 មានសុពលភាពដល់ថ្ងៃ៖ {expiry}\n"
             f"ពិនិត្យថ្ងៃខែនៅសល់ដោយប្រើពាក្យបញ្ជា /status"
@@ -230,7 +186,7 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📦 អ្នកបានជ្រើសរើសកញ្ចប់៖ **{days} ថ្ងៃ** (តម្លៃ: **{price_text}**)\n\n"
             f"💳 ១. សូម Scan QR Code ខាងលើដើម្បីទូទាត់ប្រាក់។\n"
             f"📸 ២. បន្ទាប់ពីបង់ប្រាក់រួច សូមថតរូបវិក្កយបត្រ (Screenshot) ហើយផ្ញើរូបភាពនោះចូលមកកាន់ Bot នេះផ្ទាល់។\n\n"
-            f"🤖 (ប្រព័ន្ធនឹងត្រួតពិនិត្យវិក្កយបត្រដោយស្វ័យប្រវត្តិក្នុងរយៈពេល ២-៣ នាទី ឬ Admin នឹងអនុម័តផ្ទាល់!)"
+            f"Admin នឹងពិនិត្យ និងផ្ញើ Link ជូនភ្លាមៗ!"
         )
         
         try:
@@ -238,7 +194,7 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await query.message.reply_text(f"{caption}\n\n(⚠️ រកមិនឃើញឯកសារ qr.jpg ក្នុង GitHub ទេ)")
 
-# 5. ទទួលរូបភាពវិក្កយបត្រ និង Background Auto-Verify Task (មុខងារទី ១)
+# 5. ទទួលរូបភាពវិក្កយបត្រ (Anti-Cheat)
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
@@ -283,71 +239,20 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🆔 User ID: `{user_id}`\n"
         f"ជម្រើសកញ្ចប់: **{package_desc}**\n"
         f"🖼 Photo ID: `{photo_file}`\n\n"
-        f"⏳ (Bot កំពុងរង់ចាំ Admin ពិនិត្យ ២ នាទី បើមិនទាន់ឆ្លើយតប Bot នឹង Auto-Approve ឱ្យដោយស្វ័យប្រវត្តិ)"
+        f"សូមពិនិត្យវិក្កយបត្រខាងក្រោម រួចចុចសម្រេចចិត្ត៖"
     )
     
-    sent_message = None
     try:
-        sent_message = await context.bot.send_photo(
+        await context.bot.send_photo(
             chat_id=ADMIN_ID,
             photo=photo_file,
             caption=admin_caption,
             reply_markup=reply_markup,
             parse_mode="Markdown"
         )
-        await update.message.reply_text("📥 វិក្កយបត្ររបស់អ្នកត្រូវបានបញ្ជូនហើយ! Bot កំពុងផ្ទៀងផ្ទាត់ដោយស្វ័យប្រវត្តិក្នុងរយៈពេលបន្តិចទៀតនេះ...")
+        await update.message.reply_text("📥 វិក្កយបត្ររបស់អ្នកត្រូវបានផ្ញើជូន Admin ហើយ! សូមរង់ចាំបន្តិច។")
     except Exception as e:
         await update.message.reply_text("មានបញ្ហាក្នុងការផ្ញើរូបភាព សូមព្យាយាមម្តងទៀត។")
-        return
-
-    # Background Thread សម្រាប់ Auto-Approve បន្ទាប់ពី ២-៣ នាទី បើ Admin រវល់ (មុខងារទី១)
-    def auto_verify_worker(app_context, target_user_id, target_days, target_package_desc, msg_chat_id, msg_id, photo_id):
-        time.sleep(150) # រង់ចាំប្រហែល ២ នាទីកន្លះ (150 វិនាទី)
-        try:
-            # ពិនិត្យមើលថាតើវិក្កយបត្រនេះត្រូវបានប្រើប្រាស់រួចរាល់ ឬ User ត្រូវបាន approve ទៅហើយឬនៅ
-            c = get_db_connection()
-            if not c:
-                return
-            cur = c.cursor()
-            cur.execute('SELECT user_id FROM used_receipts WHERE photo_file_id = %s', (photo_id,))
-            if cur.fetchone():
-                cur.close()
-                c.close()
-                return # ធ្លាប់ approve រួចហើយ
-            
-            # ทำการ Auto-Approve ໃຫ້
-            expiry = (datetime.now() + timedelta(days=target_days)).strftime('%Y-%m-%d %H:%M:%S')
-            cur.execute('INSERT INTO used_receipts (photo_file_id, user_id, used_at) VALUES (%s, %s, %s) ON CONFLICT (photo_file_id) DO NOTHING', 
-                           (photo_id, target_user_id, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-            cur.execute('''
-                UPDATE users SET expiry_date = %s, kicked = 0, warned = 0, package_info = %s WHERE user_id = %s
-            ''', (expiry, target_package_desc, target_user_id))
-            c.commit()
-            cur.close()
-            c.close()
-
-            # ส่งลิงก์ให้ User
-            success_message = (
-                f"🎉 អបអរសាទរ! វិក្កយបត្ររបស់អ្នកត្រូវបានផ្ទៀងផ្ទាត់ជោគជ័យដោយស្វ័យប្រវត្តិ (Auto-Verified)។\n\n"
-                f"🔗 តំណភ្ជាប់ចូលគ្រុប (Group Link):\n{GROUP_INVITE_LINK}\n\n"
-                f"📅 សមាជិកភាពมีសុពលភាព {target_days} ថ្ងៃ ដល់ថ្ងៃ៖ {expiry}\n"
-                f"ពិនិត្យថ្ងៃខែនៅសល់ដោយប្រើពាក្យបញ្ជា /status"
-            )
-            app_context.bot.send_message(chat_id=target_user_id, text=success_message)
-            
-            #  अपडेटข้อความของ Admin
-            try:
-                app_context.bot.edit_message_caption(
-                    chat_id=msg_chat_id,
-                    message_id=msg_id,
-                    caption=f"🔔 [Auto-Approved ស្វ័យប្រវត្តិដោយ Bot ក្រោយ ២នាទី]\n\n📅 កញ្ចប់: {target_package_desc}"
-                )
-            except Exception:
-                pass
-        except Exception as e:
-            print(f"Error in auto_verify_worker: {e}")
-
-    threading.Thread(target=auto_verify_worker, args=(context, user_id, days, package_desc, ADMIN_ID, sent_message.message_id, photo_file), daemon=True).start()
 
 # 6. ប្រព័ន្ធ Admin ចុច Approve, Reject ឬ Extend Days
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -544,14 +449,107 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(msg, parse_mode="Markdown")
 
-# 8. មុខងារ Broadcast (មុខងារទី ២): Admin ផ្ញើសារຫາសមាជិកទាំងអស់
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ពាក្យបញ្ជា /status
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ អ្នកមិនមានសិទ្ធិប្រើប្រាស់คำสั่งนี้ទេ!")
-        return
+    result = None
+    conn = get_db_connection()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute('SELECT expiry_date FROM users WHERE user_id = %s', (user_id,))
+            result = cursor.fetchone()
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            print(f"Error checking status: {e}")
+    
+    if result:
+        expiry_str = result[0]
+        expiry_date = datetime.strptime(expiry_str, '%Y-%m-%d %H:%M:%S')
+        if datetime.now() < expiry_date:
+            remaining = expiry_date - datetime.now()
+            days = remaining.days
+            hours = remaining.seconds // 3600
+            await update.message.reply_text(f"ស្ថានភាពសមាជិកភាព៖ ដំណើរការធម្មតា ✅\nសល់ពេល៖ {days} ថ្ងៃ និង {hours} ម៉ោងទៀត\nផុតកំណត់នៅ៖ {expiry_str}")
+        else:
+            await update.message.reply_text(f"សមាជិកភាពរបស់អ្នកបានផុតកំណត់ហើយ ❌\nសូមចុច /start ដើម្បីទិញកញ្ចប់បន្តសមាជិកភាព។")
+    else:
+        await update.message.reply_text("អ្នកមិនទាន់ជាសមាជិកទេ។ សូមផ្ញើពាក្យ /start ដើម្បីជ្រើសរើសកញ្ចប់សមាជិកភាព។")
+
+# Auto-Kick Worker
+def auto_kick_checker(application):
+    while True:
+        try:
+            conn = get_db_connection()
+            if conn:
+                cursor = conn.cursor()
+                now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                
+                soon_str = (datetime.now() + timedelta(hours=24)).strftime('%Y-%m-%d %H:%M:%S')
+                cursor.execute('SELECT user_id FROM users WHERE expiry_date <= %s AND expiry_date > %s AND warned = 0 AND kicked = 0', (soon_str, now_str))
+                warn_users = cursor.fetchall()
+                
+                for row in warn_users:
+                    u_id = row[0]
+                    try:
+                        application.bot.send_message(
+                            chat_id=u_id,
+                            text="⚠️ **សេចក្តីជូនដំណឹង:** សមាជិកភាពគ្រុបរបស់អ្នកនឹងត្រូវផុតកំណត់ក្នុងរយៈពេល ២៤ ម៉ោងខាងមុខនេះហើយ! សូមបន្តកញ្ចប់សមាជិកភាពរបស់អ្នកជាមុនសិន ដើម្បីកុំឱ្យ Bot ទាត់ចេញពីគ្រុបដោយស្វ័យប្រវត្តិ។ (ចុច /start)"
+                        )
+                        cursor.execute('UPDATE users SET warned = 1 WHERE user_id = %s', (u_id,))
+                        conn.commit()
+                    except Exception as e:
+                        print(f"Error sending warning to {u_id}: {e}")
+
+                cursor.execute('SELECT user_id FROM users WHERE expiry_date < %s AND kicked = 0', (now_str,))
+                expired_users = cursor.fetchall()
+                
+                for row in expired_users:
+                    user_id = row[0]
+                    try:
+                        application.bot.ban_chat_member(chat_id=GROUP_CHAT_ID, user_id=user_id)
+                        application.bot.unban_chat_member(chat_id=GROUP_CHAT_ID, user_id=user_id)
+                        
+                        application.bot.send_message(
+                            chat_id=user_id, 
+                            text="⏰ សមាជិកភាពរបស់អ្នកបានផុតកំណត់ហើយ! Bot បានទាត់អ្នកចេញពីគ្រុបដោយស្វ័យប្រវត្តិ។\n\n👉 សូមចុច /start ដើម្បីបង់ប្រាក់ទិញកញ្ចប់សមាជិកភាពថ្មី និងចូលគ្រុបវិញ។"
+                        )
+                    except Exception as e:
+                        print(f"Error kicking user {user_id}: {e}")
+                    
+                    cursor.execute('UPDATE users SET kicked = 1 WHERE user_id = %s', (user_id,))
+                    conn.commit()
+                    
+                cursor.close()
+                conn.close()
+        except Exception as e:
+            print(f"Database error in auto_kick: {e}")
+            
+        time.sleep(60)
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    print(f"Update {update} caused error {context.error}")
+
+if __name__ == "__main__":
+    BOT_TOKEN = os.environ.get("BOT_TOKEN")
+    if not BOT_TOKEN:
+        print("Error: BOT_TOKEN environment variable is not set!")
+        exit(1)
         
-    # ទាញយកអត្ថបទដែល Admin សរសេរต่อท้าย /broadcast
-    message_text = " ".join(context.args)
-    if not message_text:
-        await update.message.reply_text("⚠️ 
+    application = ApplicationBuilder().token(BOT_TOKEN).build()
+    
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("status", status))
+    application.add_handler(CommandHandler("stats", stats))
+    application.add_handler(CommandHandler("admin_members", admin_members))
+    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    application.add_handler(CallbackQueryHandler(button_callback, pattern="^(approve_|reject_|ext_)"))
+    application.add_handler(CallbackQueryHandler(package_callback, pattern="^(pkg_|claim_free$)"))
+    
+    application.add_error_handler(error_handler)
+    
+    threading.Thread(target=auto_kick_checker, args=(application,), daemon=True).start()
+    
+    print("Subscription Bot with Cloud PostgreSQL is starting...")
+    application.run_polling()
