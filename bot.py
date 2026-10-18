@@ -337,7 +337,7 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(caption + "\n\n⚠️ មិនអាចបង្ហាញ QR Code បានទេ។ សូមទាក់ទង Admin។")
 
 
-# ------------------------- Receipt flow ----------------------
+# ------------------------- Receipt flow (Secured) ----------------------
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user or not update.message or not update.message.photo:
@@ -364,13 +364,24 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if conn is None:
         await update.message.reply_text("❌ Database មានបញ្ហា។ សូមសាកល្បងម្ដងទៀតពេលក្រោយ។")
         return
+    
     try:
         with conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT status FROM payment_requests WHERE photo_unique_id = %s", (unique_id,))
-                if cur.fetchone():
-                    await update.message.reply_text("❌ រូបវិក្កយបត្រនេះត្រូវបានផ្ញើរួចហើយ។")
+                # 1. ការពារការយក Receipt របស់ខ្លួនឯង ឬអ្នកដទៃមកផ្ញើซ้ำ (Reuse / Replay Attack)
+                cur.execute("SELECT user_id, status FROM payment_requests WHERE photo_unique_id = %s", (unique_id,))
+                existing_req = cur.fetchone()
+                if existing_req:
+                    await update.message.reply_text("❌ វិក្កយបត្រ (Receipt) នេះត្រូវបានប្រើប្រាស់រួចហើយ ឬមានក្នុងប្រព័ន្ធរួចហើយ!")
                     return
+
+                # 2. ការពារការយក Receipt ដែលធ្លាប់ត្រូវបាន Approve រួចហើយក្នុងตาราง used_receipts
+                cur.execute("SELECT user_id FROM used_receipts WHERE photo_file_id = %s", (unique_id,))
+                if cur.fetchone():
+                    await update.message.reply_text("❌ វិក្កយបត្រនេះធ្លាប់ត្រូវបានប្រើប្រាស់ដើម្បីទូទាត់រួចរាល់ហើយ!")
+                    return
+
+                # 3. បញ្ចូលសំណើថ្មីទៅក្នុង Database
                 cur.execute("""
                     INSERT INTO payment_requests
                     (photo_unique_id, telegram_file_id, user_id, package_days, status, created_at)
@@ -383,6 +394,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         conn.close()
 
+    # បន្ថែមការរំលឹកសុវត្ថិភាពដល់ Admin ឱ្យឆែកមើលឈ្មោះ ឬ To Account ឱ្យបានច្បាស់លាស់
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user_id}_{days}_{unique_id}"),
@@ -397,10 +409,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_photo(
             chat_id=ADMIN_ID, photo=file_id,
             caption=(
-                "🔔 សំណើទូទាត់ថ្មី\n\n"
-                f"👤 ឈ្មោះ៖ {username}\n🆔 User ID៖ {user_id}\n"
-                f"📦 កញ្ចប់៖ {days} ថ្ងៃ (${PACKAGES[days]['price']})\n🧾 Receipt key៖ {unique_id}\n\n"
-                "⚠️ សូមពិនិត្យប្រាក់ចូល ABA ពិតប្រាកដ មុនចុច Approve។"
+                "🔔 សំណើទូទាត់ថ្មី (សុវត្ថិភាពតឹងរ៉ឹង)\n\n"
+                f"👤 ឈ្មោះ Telegram៖ {username}\n"
+                f"🆔 Telegram User ID៖ `{user_id}`\n"
+                f"📦 កញ្ចប់ទិញ៖ {days} ថ្ងៃ (${PACKAGES[days]['price']})\n"
+                f"🧾 Receipt Unique ID៖ `{unique_id}`\n\n"
+                "⚠️ **ចំណាំសម្រាប់ Admin:** សូមពិនិត្យមើលឈ្មោះអ្នកផ្ញើ និងលេខគណនីអ្នកទទួល (To Account) ក្នុងវិក្កយបត្រឱ្យបានត្រឹមត្រូវ មុននឹងចុច Approve!"
             ),
             reply_markup=keyboard,
         )
@@ -604,6 +618,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             with conn:
                 with conn.cursor() as cur:
+                    # ตรวจสอบซ้ำอีกครั้งเพื่อความปลอดภัยสูงสุด ป้องกันการกด Approve ซ้ำ
+                    cur.execute("SELECT user_id FROM used_receipts WHERE photo_file_id = %s", (unique_id,))
+                    if cur.fetchone():
+                        raise ValueError("Receipt already used")
+
                     cur.execute("""
                         SELECT user_id, package_days, status
                         FROM payment_requests
@@ -634,10 +653,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             expiry_date = EXCLUDED.expiry_date, kicked = 0,
                             warned = 0, package_info = EXCLUDED.package_info
                     """, (user_id, str(user_id), expiry_text, f"{days} ថ្ងៃ"))
+                    
+                    # บันทึกว่า Receipt Unique ID นี้ถูกใช้แล้ว ห้ามนำมาใช้อีกเด็ดขาด
                     cur.execute("""
                         INSERT INTO used_receipts (photo_file_id, user_id, used_at)
                         VALUES (%s, %s, %s) ON CONFLICT (photo_file_id) DO NOTHING
                     """, (unique_id, user_id, get_now()))
+                    
                     cur.execute("""
                         UPDATE payment_requests SET status = 'approved',
                             reviewed_at = %s, reviewed_by = %s
@@ -657,7 +679,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.revoke_chat_invite_link(GROUP_CHAT_ID, invite.invite_link)
             except TelegramError:
                 pass
-            await query.message.reply_text("⚠️ សំណើនេះមិនត្រឹមត្រូវ ឬត្រូវបានពិនិត្យរួចហើយ។")
+            await query.message.reply_text("⚠️ សំណើនេះមិនត្រឹមត្រូវ ឬវិក្កយបត្រនេះត្រូវបានប្រើប្រាស់រួចហើយ។")
             return
         except Exception:
             logger.exception("Approval transaction failed")
@@ -665,7 +687,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.revoke_chat_invite_link(GROUP_CHAT_ID, invite.invite_link)
             except TelegramError:
                 pass
-            await query.message.reply_text("❌ ការអនុម័តបរាជ័យ។ សូមពិនិត្យ Database Log មុនសាកល្បងម្ដងទៀត។")
+            await query.message.reply_text("❌ ការអនុម័តបរាជ័យ។")
             return
         finally:
             conn.close()
@@ -682,8 +704,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"💎 បានបញ្ចូល: `{days} ថ្ងៃ`\n\n"
                     f"📅 ថ្ងៃចាប់ផ្តើម: `{start_date_text[:10]}`\n"
                     f"⏰ ថ្ងៃផុតកំណត់: `{expiry_text[:10]}`\n\n"
-                    "✨ សេវាកម្មរបស់អ្នកបានចូលគណនីរួចរាល់។\n"
-                    "សូមចូល Web ហើយប្រើប្រាស់បានស្ដាយៗ។\n\n"
+                    "✨ សេវាកម្មរបស់អ្នកបានចូលគណនីរួចរាល់។\n\n"
                     f"🔗 Link ចូលគ្រុប (២៤ម៉ោង): {invite.invite_link}"
                 ),
             )
@@ -1068,7 +1089,7 @@ def main():
     application.add_handler(CommandHandler("admin", admin_panel_command))
     application.add_handler(CommandHandler("broadcast", broadcast_command))
     application.add_handler(CommandHandler("adddays", adddays_command))
-    application.add_handler(CommandHandler("kickuser", kickuser_command))
+    application.add_handler, (CommandHandler("kickuser", kickuser_command))
     application.add_handler(CommandHandler("setqr", setqr_command))
     application.add_handler(CommandHandler("export", export_command))
 
