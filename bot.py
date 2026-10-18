@@ -121,8 +121,8 @@ def main_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("👤 គណនីរបស់ខ្ញុំ", callback_data="user_check_status"),
          InlineKeyboardButton("💎 ទិញសេវាកម្ម", callback_data="user_packages")],
-        [InlineKeyboardButton("💬 Admin Support", url="https://t.me/YourUsername"),
-         InlineKeyboardButton("☑️ អំពីពួកเรา", callback_data="user_about")],
+        [InlineKeyboardButton("💬 Admin Support", url="https://t.me/Alex_Pree"),
+         InlineKeyboardButton("☑️ អំពីពួកយើង", callback_data="user_about")],
         [InlineKeyboardButton("🌐 របៀបបង់ប្រាក់", callback_data="user_payment_help")],
     ])
 
