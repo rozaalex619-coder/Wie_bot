@@ -1,4 +1,4 @@
-Import asyncio
+import asyncio
 import csv
 import io
 import logging
@@ -683,7 +683,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"📅 ថ្ងៃចាប់ផ្តើម: `{start_date_text[:10]}`\n"
                     f"⏰ ថ្ងៃផុតកំណត់: `{expiry_text[:10]}`\n\n"
                     "✨ សេវាកម្មរបស់អ្នកបានចូលគណនីរួចរាល់។\n"
-                    "សូមប្រើប្រាស់បានស្ដាយៗ។\n\n"
+                    "សូមចូល Web ហើយប្រើប្រាស់បានស្ដាយៗ។\n\n"
                     f"🔗 Link ចូលគ្រុប (២៤ម៉ោង): {invite.invite_link}"
                 ),
             )
