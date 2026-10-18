@@ -26,10 +26,10 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "8980369344"))
 GROUP_CHAT_ID = int(os.getenv("GROUP_CHAT_ID", "-1004400009713"))
 
 PACKAGES = {
-    5: {"price": "២ ដុល្លារ", "label": "៥ ថ្ងៃ - ២ ដុល្លារ"},
-    10: {"price": "៣ ដុល្លារ", "label": "១០ ថ្ងៃ - ៣ ដុល្លារ"},
-    20: {"price": "៥ ដុល្លារ", "label": "២០ ថ្ងៃ - ៥ ដុល្លារ"},
-    30: {"price": "៦ ដុល្លារ", "label": "៣០ ថ្ងៃ - ៦ ដុល្លារ"},
+    5: {"price": "2.00 ដុល្លារ", "label": "🛒 ទិញសេវាកម្ម: 5 ថ្ងៃ"},
+    10: {"price": "3.00 ដុល្លារ", "label": "🛒 ទិញសេវាកម្ម: 10 ថ្ងៃ"},
+    20: {"price": "5.00 ដុល្លារ", "label": "🛒 ទិញសេវាកម្ម: 20 ថ្ងៃ"},
+    30: {"price": "6.00 ដុល្លារ", "label": "🛒 ទិញសេវាកម្ម: 30 ថ្ងៃ"},
 }
 
 logging.basicConfig(
@@ -110,19 +110,20 @@ def target_message(update):
 
 def package_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(PACKAGES[5]["label"], callback_data="pkg_5")],
-        [InlineKeyboardButton(PACKAGES[10]["label"], callback_data="pkg_10")],
-        [InlineKeyboardButton(PACKAGES[20]["label"], callback_data="pkg_20")],
-        [InlineKeyboardButton(PACKAGES[30]["label"], callback_data="pkg_30")],
+        [InlineKeyboardButton("5 ថ្ងៃ - 2.00$", callback_data="pkg_5")],
+        [InlineKeyboardButton("10 ថ្ងៃ - 3.00$", callback_data="pkg_10")],
+        [InlineKeyboardButton("20 ថ្ងៃ - 5.00$", callback_data="pkg_20")],
+        [InlineKeyboardButton("30 ថ្ងៃ - 6.00$", callback_data="pkg_30")],
         [InlineKeyboardButton("⬅️ ត្រឡប់ទៅម៉ឺនុយដើម", callback_data="user_main_menu")],
     ])
 
 def main_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛒 ជ្រើសរើសកញ្ចប់សមាជិកភាព", callback_data="user_packages")],
-        [InlineKeyboardButton("📊 ពិនិត្យស្ថានភាពសមាជិកភាព", callback_data="user_check_status")],
-        [InlineKeyboardButton("👥 Link ណែនាំមិត្តភក្តិ (ថែម ១ ម៉ោង)", callback_data="get_referral_link")],
-        [InlineKeyboardButton("❓ របៀបទូទាត់ប្រាក់", callback_data="user_payment_help")],
+        [InlineKeyboardButton("👤 គណនីរបស់ខ្ញុំ", callback_data="user_check_status"),
+         InlineKeyboardButton("💎 ទិញសេវាកម្ម", callback_data="user_packages")],
+        [InlineKeyboardButton("💬 Admin Support", url="https://t.me/YourUsername"),
+         InlineKeyboardButton("☑️ អំពីពួកเรา", callback_data="user_about")],
+        [InlineKeyboardButton("🌐 របៀបបង់ប្រាក់", callback_data="user_payment_help")],
     ])
 
 def init_db():
@@ -229,7 +230,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     "UPDATE users SET expiry_date = %s, warned = 0 WHERE user_id = %s",
                                     (fmt_dt(base + timedelta(hours=1)), referrer_id),
                                 )
-                                # Notify after DB transaction is committed below.
                                 context.application.create_task(notify_referrer(context, referrer_id))
                         cur.execute("""
                             INSERT INTO users
@@ -250,8 +250,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.effective_message.reply_text(
         f"សួស្តី {user.first_name or 'មិត្ត'}!\n\n"
-        "សូមស្វាគមន៍មកកាន់ប្រព័ន្ធទិញសមាជិកភាពគ្រុប។\n"
-        "សូមជ្រើសរើសមុខងារខាងក្រោម៖",
+        "សូមស្វាគមន៍មកកាន់ប្រព័ន្ធទិញសេវាកម្មរបស់យើង។\n"
+        "សូមជ្រើសរើសម៉ឺនុយខាងក្រោម៖",
         reply_markup=main_keyboard(),
     )
 
@@ -259,7 +259,7 @@ async def notify_referrer(context, referrer_id):
     try:
         await context.bot.send_message(
             chat_id=referrer_id,
-            text="🎁 មិត្តភក្តិថ្មីបានចូលតាម Link របស់អ្នក! អ្នកទទួលបានបន្ថែម ១ ម៉ោង។",
+            text="🎁 មិត្តភក្តិថ្មីได้ចូលតាម Link របស់អ្នក! អ្នកទទួលបានបន្ថែម ១ ម៉ោង។",
         )
     except TelegramError:
         logger.info("Could not notify referrer %s", referrer_id)
@@ -273,33 +273,35 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
 
     if data == "user_packages":
-        await query.message.reply_text("📦 សូមជ្រើសរើសកញ្ចប់សមាជិកភាព៖", reply_markup=package_keyboard())
+        await query.message.reply_text("📦 សូមជ្រើសរើសកញ្ចប់សេវាកម្ម៖", reply_markup=package_keyboard())
         return
     if data == "user_check_status":
         await status(update, context)
         return
     if data == "user_payment_help":
         await query.message.reply_text(
-            "💳 របៀបទូទាត់ប្រាក់៖\n\n"
-            "1. ជ្រើសរើសកញ្ចប់សមាជិកភាព។\n"
-            "2. ស្កេន QR Code ដើម្បីបង់ប្រាក់។\n"
-            "3. ផ្ញើរូបវិក្កយបត្រមក Bot នេះ។\n"
-            "4. រង់ចាំ Admin ពិនិត្យ និងអនុម័ត។",
+            "💳 របៀបបង់ប្រាក់៖\n\n"
+            "1. ជ្រើសរើសកញ្ចប់សេវាកម្មដែលអ្នកចង់ទិញ។\n"
+            "2. ស្កេន QR Code តាមតម្លៃកញ្ចប់នីមួយៗ។\n"
+            "3. ផ្ញើរូបវិក្កយបត្រ (Receipt) មកកាន់ Bot នេះផ្ទាល់។\n"
+            "4. រង់ចាំ Owner ពិនិត្យ និង Approve ជូនជាការស្រេច។",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ ត្រឡប់ទៅម៉ឺនុយដើម", callback_data="user_main_menu")
+            ]]),
+        )
+        return
+    if data == "user_about":
+        await query.message.reply_text(
+            "☑️ អំពីពួកเรา៖\n\n"
+            "យើងខ្ញុំផ្តល់ជូននូវសេវាកម្មឌីជីថលលឿន និងមានទំនុកចិត្តខ្ពស់។\n"
+            "⏱ ម៉ោងធ្វើការ៖ 8:00 ព្រឹក ដល់ 9:00 យប់",
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("⬅️ ត្រឡប់ទៅម៉ឺនុយដើម", callback_data="user_main_menu")
             ]]),
         )
         return
     if data == "user_main_menu":
-        await query.message.reply_text("សូមជ្រើសរើសមុខងារ៖", reply_markup=main_keyboard())
-        return
-    if data == "get_referral_link":
-        bot = await context.bot.get_me()
-        link = f"https://t.me/{bot.username}?start=ref_{user_id}"
-        await query.message.reply_text(
-            f"🔗 Link ណែនាំមិត្តភក្តិ៖\n{link}\n\n"
-            "មិត្តភក្តិថ្មីដែលចូលប្រើ Bot ជាលើកដំបូងតាម Link នេះ នឹងផ្តល់រង្វាន់ ១ ម៉ោង។"
-        )
+        await query.message.reply_text("សូមជ្រើសរើសម៉ឺនុយ៖", reply_markup=main_keyboard())
         return
     if data.startswith("pkg_"):
         try:
@@ -318,10 +320,11 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             logger.exception("Could not load custom QR")
         caption = (
-            f"📦 កញ្ចប់៖ {days} ថ្ងៃ ({PACKAGES[days]['price']})\n\n"
-            "💳 សូមស្កេន QR Code ដើម្បីទូទាត់ប្រាក់។\n"
-            "📸 បន្ទាប់ពីបង់ប្រាក់ សូមផ្ញើរូបវិក្កយបត្រមក Bot នេះ។\n"
-            "Admin នឹងពិនិត្យមុនពេលអនុម័ត។"
+            "🧾 Payment\n\n"
+            f"{PACKAGES[days]['label']}\n"
+            f"💵 តម្លៃ: ${PACKAGES[days]['price']}\n\n"
+            "សូមស្កែន QR រួចផ្ញើប័ណ្ណមក Bot\n"
+            f"លេខសំណើ៖ #{user_id}"
         )
         try:
             if qr_id:
@@ -341,7 +344,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_id = user.id
     if user_id not in user_selected_package:
-        await update.message.reply_text("⚠️ សូមជ្រើសរើសកញ្ចប់សមាជិកភាពជាមុនសិន។", reply_markup=package_keyboard())
+        await update.message.reply_text("⚠️ សូមជ្រើសរើសកញ្ចប់សេវាកម្មជាមុនសិន។", reply_markup=package_keyboard())
         return
 
     current_time = asyncio.get_running_loop().time()
@@ -386,8 +389,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("❌ Reject", callback_data=f"reject_{user_id}_{unique_id}"),
         ],
         [
-            InlineKeyboardButton("➕ បន្ថែម ៥ថ្ងៃ", callback_data=f"ext_{user_id}_5"),
-            InlineKeyboardButton("➕ បន្ថែម ១០ថ្ងៃ", callback_data=f"ext_{user_id}_10"),
+            InlineKeyboardButton("➕ បន្ថែម 5ថ្ងៃ", callback_data=f"ext_{user_id}_5"),
+            InlineKeyboardButton("➕ បន្ថែម 10ថ្ងៃ", callback_data=f"ext_{user_id}_10"),
         ],
     ])
     try:
@@ -396,12 +399,18 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption=(
                 "🔔 សំណើទូទាត់ថ្មី\n\n"
                 f"👤 ឈ្មោះ៖ {username}\n🆔 User ID៖ {user_id}\n"
-                f"📦 កញ្ចប់៖ {PACKAGES[days]['label']}\n🧾 Receipt key៖ {unique_id}\n\n"
+                f"📦 កញ្ចប់៖ {days} ថ្ងៃ (${PACKAGES[days]['price']})\n🧾 Receipt key៖ {unique_id}\n\n"
                 "⚠️ សូមពិនិត្យប្រាក់ចូល ABA ពិតប្រាកដ មុនចុច Approve។"
             ),
             reply_markup=keyboard,
         )
-        await update.message.reply_text("📥 បានបញ្ជូនវិក្កយបត្រទៅ Admin រួចរាល់។ សូមរង់ចាំការពិនិត្យ។")
+        await update.message.reply_text(
+            "✅ Receipt បានទទួលរួចរាល់។\n\n"
+            "⏳ សូមរង់ចាំ Owner ត្រួតពិនិត្យ និង Approve...\n"
+            "📅 សេវាកម្ម (ចំនួនថ្ងៃ) នឹងចូលគណនីរបស់អ្នក បន្ទាប់ពី Approve រួច។\n\n"
+            "⏱ ម៉ោងធ្វើការ៖ 8:00 ព្រឹក ដល់ 9:00 យប់\n"
+            "🔴 ក្រៅម៉ោងធ្វើការ ការត្រួតពិនិត្យអាចមានការយឺតយ៉ាវបន្តិច។"
+        )
     except TelegramError:
         logger.exception("Could not send receipt to admin")
         await update.message.reply_text("❌ មិនអាចផ្ញើវិក្កយបត្រទៅ Admin បានទេ។")
@@ -454,7 +463,6 @@ async def handle_chat_join_request(update: Update, context: ContextTypes.DEFAULT
         )
         return
 
-    # Claim the link atomically to avoid approving duplicate requests.
     conn = get_db_connection()
     if conn is None:
         return
@@ -568,8 +576,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if days not in PACKAGES:
             return
 
-        # Create/store invite first. If creation fails, payment remains pending,
-        # allowing Admin to retry safely without extending membership twice.
         invite_expiry = now_dt() + timedelta(hours=24)
         try:
             invite = await context.bot.create_chat_invite_link(
@@ -593,6 +599,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         expiry_text = None
+        start_date_text = None
         approved = False
         try:
             with conn:
@@ -614,7 +621,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     current = now_dt()
                     old_exp = parse_dt(old[0]) if old and old[0] else None
                     base = old_exp if old_exp and old_exp > current else current
-                    expiry_text = fmt_dt(base + timedelta(days=days))
+                    start_dt_val = base
+                    expiry_dt_val = base + timedelta(days=days)
+                    expiry_text = fmt_dt(expiry_dt_val)
+                    start_date_text = fmt_dt(start_dt_val)
 
                     cur.execute("""
                         INSERT INTO users
@@ -623,7 +633,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         ON CONFLICT (user_id) DO UPDATE SET
                             expiry_date = EXCLUDED.expiry_date, kicked = 0,
                             warned = 0, package_info = EXCLUDED.package_info
-                    """, (user_id, str(user_id), expiry_text, PACKAGES[days]["label"]))
+                    """, (user_id, str(user_id), expiry_text, f"{days} ថ្ងៃ"))
                     cur.execute("""
                         INSERT INTO used_receipts (photo_file_id, user_id, used_at)
                         VALUES (%s, %s, %s) ON CONFLICT (photo_file_id) DO NOTHING
@@ -666,16 +676,21 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 chat_id=user_id,
                 text=(
-                    "🎉 ការទូទាត់របស់អ្នកត្រូវបានអនុម័តហើយ!\n\n"
-                    f"🔗 Link ស្នើសុំចូលគ្រុប (សុពលភាព ២៤ ម៉ោង)៖ {invite.invite_link}\n\n"
-                    "🔐 Link នេះភ្ជាប់ជាមួយ Telegram User ID របស់អ្នក។ Bot នឹងពិនិត្យមុនអនុម័តសំណើចូល។\n"
-                    f"📅 សមាជិកភាពមានសុពលភាពដល់៖ {expiry_text}\n"
-                    "ប្រើ /status ដើម្បីពិនិត្យស្ថានភាព។"
+                    "✅ Payment ត្រូវបាន Approve រួចរាល់។\n\n"
+                    f"👤 Account: `{user_id}`\n"
+                    f"🔑 លេខសម្ងាត់: `SfD3D24ZgBWu`\n\n"
+                    f"💎 បានបញ្ចូល: `{days} ថ្ងៃ`\n\n"
+                    f"📅 ថ្ងៃចាប់ផ្តើម: `{start_date_text[:10]}`\n"
+                    f"⏰ ថ្ងៃផុតកំណត់: `{expiry_text[:10]}`\n\n"
+                    "✨ សេវាកម្មរបស់អ្នកបានចូលគណនីរួចរាល់។\n"
+                    "សូមចូល Web ហើយប្រើប្រាស់បានស្ដាយៗ។\n\n"
+                    f"🌐 Website: https://web.hchdigital.pro\n"
+                    f"🔗 Link ចូលគ្រុប (២៤ម៉ោង): {invite.invite_link}"
                 ),
             )
         except TelegramError:
             logger.exception("Could not notify approved user %s", user_id)
-            await query.message.reply_text("⚠️ បាន Approve ហើយ ប៉ុន្តែមិនអាចផ្ញើសារទៅអតិថិជនបានទេ។ អតិថិជនត្រូវចុច /start ជាមួយ Bot ជាមុន។")
+            await query.message.reply_text("⚠️ បាន Approve ហើយ ប៉ុន្តែមិនអាចផ្ញើសារទៅអតិថិជនបានទេ។")
         try:
             await query.edit_message_caption(caption=(query.message.caption or "") + "\n\n✅ បានអនុម័តរួចរាល់។")
         except TelegramError:
@@ -738,7 +753,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("❌ មិនអាចបន្ថែមថ្ងៃបានទេ។")
             return
         try:
-            await context.bot.send_message(user_id, f"✨ Admin បានបន្ថែមសមាជិកភាព {days} ថ្ងៃ។ ផុតកំណត់៖ {expiry_text}")
+            await context.bot.send_message(user_id, f"✨ Admin បានបន្ថែមសេវាកម្ម {days} ថ្ងៃ។ ផុតកំណត់៖ {expiry_text}")
         except TelegramError:
             pass
         try:
@@ -759,24 +774,32 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await target_message(update).reply_text("❌ មិនអាចពិនិត្យស្ថានភាពបានទេ។")
         return
     if not row:
-        await target_message(update).reply_text("អ្នកមិនទាន់មានទិន្នន័យសមាជិកទេ។ សូមប្រើ /start។")
+        await target_message(update).reply_text("អ្នកមិនទាន់មានទិន្នន័យសេវាកម្មទេ។ សូមប្រើ /start។")
         return
     expiry = parse_dt(row[0])
+    
+    msg_text = (
+        "👤 គណនីរបស់ខ្ញុំ\n\n"
+        f"🔑 Account: `{user.id}`\n"
+        f"🔒 លេខសម្ងាត់: `SfD3D24ZgBWu`\n"
+    )
     if expiry and expiry > now_dt() and not row[1]:
         remaining = expiry - now_dt()
-        text = f"ស្ថានភាព៖ សកម្ម ✅\nសល់ពេល៖ {remaining.days} ថ្ងៃ និង {remaining.seconds // 3600} ម៉ោង\nផុតកំណត់៖ {fmt_dt(expiry)}"
+        msg_text += (
+            f"📅 ថ្ងៃផុតកំណត់: `{fmt_dt(expiry)[:10]}`\n"
+            f"⏳ សល់ពេល៖ {remaining.days} ថ្ងៃ\n\n"
+            "✨ សេវាកម្មរបស់អ្នកមានសកម្មភាពធម្មតា។\n"
+            "🌐 Website: https://web.hchdigital.pro"
+        )
     else:
-        text = "សមាជិកភាពរបស់អ្នកបានផុតកំណត់ ឬត្រូវបានដកចេញហើយ។ សូមជ្រើសរើសកញ្ចប់ដើម្បីបន្ត។"
+        msg_text += "🔴 សេវាកម្មរបស់អ្នកបានផុតកំណត់។ សូមជ្រើសរើសកញ្ចប់ដើម្បីបន្ត។"
+
     await target_message(update).reply_text(
-        text,
+        msg_text,
         reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("💳 បន្ត / ទិញសមាជិកភាព", callback_data="extend_menu")
+            InlineKeyboardButton("💎 ទិញសេវាកម្មបន្ថែម", callback_data="user_packages")
         ]]),
     )
-
-async def extend_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    await update.callback_query.message.reply_text("📦 សូមជ្រើសរើសកញ្ចប់៖", reply_markup=package_keyboard())
 
 
 # ----------------------- Admin panel -------------------------
@@ -868,7 +891,7 @@ async def kickuser_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ បានដក User {uid} ចេញពីគ្រុប។")
     except Exception:
         logger.exception("kickuser failed")
-        await update.message.reply_text("❌ មិនអាចដក User ចេញបានទេ។ ពិនិត្យ Bot permissions និង User ID។")
+        await update.message.reply_text("❌ មិនអាចដក User ចេញបានទេ។")
 
 async def setqr_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -998,9 +1021,9 @@ async def expiry_job(context: ContextTypes.DEFAULT_TYPE):
                 try:
                     await context.bot.send_message(
                         uid,
-                        "⚠️ សមាជិកភាពរបស់អ្នកនឹងផុតកំណត់ក្នុង ២៤ ម៉ោង។ សូមបន្តកញ្ចប់ជាមុន។",
+                        "⚠️ សេវាកម្មរបស់អ្នកនឹងផុតកំណត់ក្នុង ២៤ ម៉ោង។ សូមបន្តកញ្ចប់ជាមុន។",
                         reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton("💳 បន្តសមាជិកភាព", callback_data="extend_menu")
+                            InlineKeyboardButton("💎 ទិញសេវាកម្មបន្ថែម", callback_data="user_packages")
                         ]]),
                     )
                     db_execute("UPDATE users SET warned = 1 WHERE user_id = %s AND kicked = 0", (uid,))
@@ -1016,9 +1039,9 @@ async def expiry_job(context: ContextTypes.DEFAULT_TYPE):
                 try:
                     await context.bot.send_message(
                         uid,
-                        "⏰ សមាជិកភាពរបស់អ្នកបានផុតកំណត់ ហើយត្រូវបានដកចេញពីគ្រុប។ សូមទិញកញ្ចប់ថ្មីដើម្បីចូលវិញ។",
+                        "⏰ សេវាកម្មរបស់អ្នកបានផុតកំណត់ ហើយត្រូវបានដកចេញពីគ្រុប។ សូមទិញកញ្ចប់ថ្មីដើម្បីចូលវិញ។",
                         reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton("💳 ទិញកញ្ចប់ថ្មី", callback_data="extend_menu")
+                            InlineKeyboardButton("💎 ទិញកញ្ចប់ថ្មី", callback_data="user_packages")
                         ]]),
                     )
                 except TelegramError:
@@ -1055,8 +1078,7 @@ def main():
     application.add_handler(ChatJoinRequestHandler(handle_chat_join_request))
     application.add_handler(CallbackQueryHandler(button_callback, pattern=r"^(approve_|reject_|ext_)"))
     application.add_handler(CallbackQueryHandler(admin_panel_callback, pattern=r"^admin_"))
-    application.add_handler(CallbackQueryHandler(package_callback, pattern=r"^(pkg_|get_referral_link|user_)"))
-    application.add_handler(CallbackQueryHandler(extend_menu_callback, pattern=r"^extend_menu$"))
+    application.add_handler(CallbackQueryHandler(package_callback, pattern=r"^(pkg_|user_)"))
     application.add_error_handler(error_handler)
 
     if application.job_queue:
