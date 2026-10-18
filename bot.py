@@ -56,6 +56,7 @@ def run_web():
 
 threading.Thread(target=run_web, daemon=True).start()
 
+
 # ------------------------- Utilities -------------------------
 def now_dt():
     return datetime.now(CAMBODIA_TZ)
@@ -180,7 +181,7 @@ def init_db():
                         status TEXT NOT NULL DEFAULT 'active'
                     )
                 """)
-        http://logger.info("Database initialized")
+        logger.info("Database initialized")
     except Exception:
         logger.exception("Database initialization failed")
     finally:
@@ -188,12 +189,13 @@ def init_db():
 
 init_db()
 
+
 # --------------------------- /start --------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user:
         return
-    user_id = http://user.id
+    user_id = user.id
     username = user.username or user.first_name or "User"
     referrer_id = None
 
@@ -260,14 +262,15 @@ async def notify_referrer(context, referrer_id):
             text="🎁 មិត្តភក្តិថ្មីបានចូលតាម Link របស់អ្នក! អ្នកទទួលបានបន្ថែម ១ ម៉ោង។",
         )
     except TelegramError:
-        http://logger.info("Could not notify referrer %s", referrer_id)
+        logger.info("Could not notify referrer %s", referrer_id)
+
 
 # ----------------------- User callbacks ----------------------
 async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
-    user_id = http://query.from_user.id
+    user_id = query.from_user.id
 
     if data == "user_packages":
         await query.message.reply_text("📦 សូមជ្រើសរើសកញ្ចប់សមាជិកភាព៖", reply_markup=package_keyboard())
@@ -292,7 +295,7 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if data == "get_referral_link":
         bot = await context.bot.get_me()
-        link = f"https://t.me/%7Bbot.username%7D?start=ref_%7Buser_id%7D"
+        link = f"https://t.me/{bot.username}?start=ref_{user_id}"
         await query.message.reply_text(
             f"🔗 Link ណែនាំមិត្តភក្តិ៖\n{link}\n\n"
             "មិត្តភក្តិថ្មីដែលចូលប្រើ Bot ជាលើកដំបូងតាម Link នេះ នឹងផ្តល់រង្វាន់ ១ ម៉ោង។"
@@ -330,12 +333,13 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.exception("Could not send QR code")
             await query.message.reply_text(caption + "\n\n⚠️ មិនអាចបង្ហាញ QR Code បានទេ។ សូមទាក់ទង Admin។")
 
+
 # ------------------------- Receipt flow ----------------------
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user or not update.message or not update.message.photo:
         return
-    user_id = http://user.id
+    user_id = user.id
     if user_id not in user_selected_package:
         await update.message.reply_text("⚠️ សូមជ្រើសរើសកញ្ចប់សមាជិកភាពជាមុនសិន។", reply_markup=package_keyboard())
         return
@@ -402,12 +406,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.exception("Could not send receipt to admin")
         await update.message.reply_text("❌ មិនអាចផ្ញើវិក្កយបត្រទៅ Admin បានទេ។")
 
+
 # ------------------ Secure private invite --------------------
 async def handle_chat_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     req = update.chat_join_request
-    if not req or http://req.chat.id != GROUP_CHAT_ID:
+    if not req or req.chat.id != GROUP_CHAT_ID:
         return
-    joining_user_id = http://req.from_user.id
+    joining_user_id = req.from_user.id
     invite_url = req.invite_link.invite_link if req.invite_link else None
 
     if not invite_url:
@@ -510,6 +515,7 @@ async def decline_request(context, user_id, message):
     except TelegramError:
         pass
 
+
 # --------------------- Membership helper ---------------------
 async def add_membership_days(user_id, days, note):
     conn = get_db_connection()
@@ -540,10 +546,11 @@ async def add_membership_days(user_id, days, note):
     finally:
         conn.close()
 
+
 # --------------------- Admin receipt actions -----------------
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if not is_admin(http://query.from_user.id):
+    if not is_admin(query.from_user.id):
         await query.answer("❌ អ្នកមិនមានសិទ្ធិប្រើមុខងារនេះទេ។", show_alert=True)
         return
     await query.answer()
@@ -739,13 +746,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except TelegramError:
             pass
 
+
 # -------------------------- Status ---------------------------
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user:
         return
     try:
-        row = db_execute("SELECT expiry_date, kicked FROM users WHERE user_id = %s", (http://user.id,), fetchone=True)
+        row = db_execute("SELECT expiry_date, kicked FROM users WHERE user_id = %s", (user.id,), fetchone=True)
     except Exception:
         logger.exception("Status query failed")
         await target_message(update).reply_text("❌ មិនអាចពិនិត្យស្ថានភាពបានទេ។")
@@ -770,9 +778,10 @@ async def extend_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.callback_query.answer()
     await update.callback_query.message.reply_text("📦 សូមជ្រើសរើសកញ្ចប់៖", reply_markup=package_keyboard())
 
+
 # ----------------------- Admin panel -------------------------
 async def admin_panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(http://update.effective_user.id):
+    if not is_admin(update.effective_user.id):
         return
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📊 ស្ថិតិប្រព័ន្ធ", callback_data="admin_stats")],
@@ -784,7 +793,7 @@ async def admin_panel_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if not is_admin(http://query.from_user.id):
+    if not is_admin(query.from_user.id):
         await query.answer("❌ អ្នកមិនមានសិទ្ធិទេ។", show_alert=True)
         return
     await query.answer()
@@ -801,7 +810,7 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         )
 
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(http://update.effective_user.id):
+    if not is_admin(update.effective_user.id):
         return
     message_text = " ".join(context.args).strip()
     if not message_text:
@@ -823,7 +832,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Broadcast រួចរាល់\nជោគជ័យ៖ {ok}\nបរាជ័យ៖ {failed}")
 
 async def adddays_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(http://update.effective_user.id):
+    if not is_admin(update.effective_user.id):
         return
     if len(context.args) < 2:
         await update.message.reply_text("ប្រើ៖ /adddays USER_ID DAYS")
@@ -846,7 +855,7 @@ async def adddays_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
 async def kickuser_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(http://update.effective_user.id):
+    if not is_admin(update.effective_user.id):
         return
     if not context.args:
         await update.message.reply_text("ប្រើ៖ /kickuser USER_ID")
@@ -862,7 +871,7 @@ async def kickuser_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ មិនអាចដក User ចេញបានទេ។ ពិនិត្យ Bot permissions និង User ID។")
 
 async def setqr_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(http://update.effective_user.id):
+    if not is_admin(update.effective_user.id):
         return
     reply = update.message.reply_to_message
     if not reply or not reply.photo:
@@ -887,7 +896,7 @@ async def setqr_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
 
 async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(http://update.effective_user.id):
+    if not is_admin(update.effective_user.id):
         return
     try:
         rows = db_execute(
@@ -906,7 +915,7 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await target_message(update).reply_document(document=file_obj, caption="📊 ទិន្នន័យសមាជិក (CSV)")
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(http://update.effective_user.id):
+    if not is_admin(update.effective_user.id):
         if update.callback_query:
             await update.callback_query.answer("❌ អ្នកមិនមែនជា Admin ទេ។", show_alert=True)
         return
@@ -926,7 +935,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await target_message(update).reply_text(f"📊 ស្ថិតិប្រព័ន្ធ\n\n🟢 សកម្ម៖ {active}\n🔴 ផុតកំណត់/ត្រូវបានដក៖ {expired}")
 
 async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(http://update.effective_user.id):
+    if not is_admin(update.effective_user.id):
         if update.callback_query:
             await update.callback_query.answer("❌ អ្នកមិនមែនជា Admin ទេ។", show_alert=True)
         return
@@ -960,6 +969,7 @@ async def admin_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chunk += line + "\n"
     if chunk:
         await target_message(update).reply_text(chunk)
+
 
 # --------------------- Expiry background job -----------------
 async def expiry_job(context: ContextTypes.DEFAULT_TYPE):
@@ -1019,8 +1029,10 @@ async def expiry_job(context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         logger.exception("Expiry job failed")
 
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error("Unhandled Telegram update error", exc_info=context.error)
+
 
 def main():
     token = os.getenv("BOT_TOKEN")
@@ -1052,8 +1064,7 @@ def main():
     else:
         logger.warning("JobQueue unavailable. Install python-telegram-bot[job-queue].")
 
-    http://logger.info("Subscription bot starting")
+    logger.info("Subscription bot starting")
     application.run_polling()
 
 if __name__ == "__main__":
-    main()
