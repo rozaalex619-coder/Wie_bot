@@ -259,7 +259,7 @@ async def notify_referrer(context, referrer_id):
     try:
         await context.bot.send_message(
             chat_id=referrer_id,
-            text="🎁 មិត្តភក្តិថ្មីได้ចូលតាម Link របស់អ្នក! អ្នកទទួលបានបន្ថែម ១ ម៉ោង។",
+            text="🎁 ណែនាំមិត្តភក្តិថ្មីចូលតាម Link របស់អ្នក! អ្នកទទួលបានបន្ថែម ១ ម៉ោង។",
         )
     except TelegramError:
         logger.info("Could not notify referrer %s", referrer_id)
@@ -292,7 +292,7 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if data == "user_about":
         await query.message.reply_text(
-            "☑️ អំពីពួកเรา៖\n\n"
+            "☑️ អំពីពួកយើង៖\n\n"
             "យើងខ្ញុំផ្តល់ជូននូវសេវាកម្មឌីជីថលលឿន និងមានទំនុកចិត្តខ្ពស់។\n"
             "⏱ ម៉ោងធ្វើការ៖ 8:00 ព្រឹក ដល់ 9:00 យប់",
             reply_markup=InlineKeyboardMarkup([[
@@ -684,7 +684,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"⏰ ថ្ងៃផុតកំណត់: `{expiry_text[:10]}`\n\n"
                     "✨ សេវាកម្មរបស់អ្នកបានចូលគណនីរួចរាល់។\n"
                     "សូមចូល Web ហើយប្រើប្រាស់បានស្ដាយៗ។\n\n"
-                    f"🌐 Website: https://web.hchdigital.pro\n"
                     f"🔗 Link ចូលគ្រុប (២៤ម៉ោង): {invite.invite_link}"
                 ),
             )
@@ -789,7 +788,6 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📅 ថ្ងៃផុតកំណត់: `{fmt_dt(expiry)[:10]}`\n"
             f"⏳ សល់ពេល៖ {remaining.days} ថ្ងៃ\n\n"
             "✨ សេវាកម្មរបស់អ្នកមានសកម្មភាពធម្មតា។\n"
-            "🌐 Website: https://web.hchdigital.pro"
         )
     else:
         msg_text += "🔴 សេវាកម្មរបស់អ្នកបានផុតកំណត់។ សូមជ្រើសរើសកញ្ចប់ដើម្បីបន្ត។"
