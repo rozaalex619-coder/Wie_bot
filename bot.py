@@ -678,7 +678,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text=(
                     "✅ Payment ត្រូវបាន Approve រួចរាល់។\n\n"
                     f"👤 Account: `{user_id}`\n"
-                    f"🔑 លេខសម្ងាត់: `SfD3D24ZgBWu`\n\n"
+                    f"🔒 លេខសម្ងាត់: `SfD3D24ZgBWu`\n\n"
                     f"💎 បានបញ្ចូល: `{days} ថ្ងៃ`\n\n"
                     f"📅 ថ្ងៃចាប់ផ្តើម: `{start_date_text[:10]}`\n"
                     f"⏰ ថ្ងៃផុតកំណត់: `{expiry_text[:10]}`\n\n"
@@ -1039,7 +1039,7 @@ async def expiry_job(context: ContextTypes.DEFAULT_TYPE):
                         uid,
                         "⏰ សេវាកម្មរបស់អ្នកបានផុតកំណត់ ហើយត្រូវបានដកចេញពីគ្រុប។ សូមទិញកញ្ចប់ថ្មីដើម្បីចូលវិញ។",
                         reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton("💎 ទិញកញ្ចប់ថ្មី", callback_data="user_packages")
+                            InlineKeyboardButton("💳 ទិញកញ្ចប់ថ្មី", callback_data="user_packages")
                         ]]),
                     )
                 except TelegramError:
