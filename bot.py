@@ -9,8 +9,6 @@ from zoneinfo import ZoneInfo
 
 import psycopg2
 from flask import Flask
-from PIL import Image
-import easyocr
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import TelegramError
 from telegram.ext import (
@@ -25,16 +23,16 @@ CAMBODIA_TZ = ZoneInfo("Asia/Phnom_Penh")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8980369344"))
 GROUP_CHAT_ID = int(os.getenv("GROUP_CHAT_ID", "-1004400009713"))
 
-# ⚙️ ព័ត៌មានគណនី ABA របស់អ្នក (សម្រាប់ប្រព័ន្ធ OCR ផ្ទៀងផ្ទាត់)
+# ⚙️ ព័ត៌មានគណនី ABA របស់ម្ចាស់បូតសម្រាប់រំលឹក Admin
 MERCHANT_NAME = "ROZA YIN"
 MERCHANT_USD_ACCOUNT = "019 090 094"
 MERCHANT_KHR_ACCOUNT = "500 769 213"
 
 PACKAGES = {
-    5: {"price": "2.00", "label": "🛒 ទិញសេវាកម្ម: 5 ថ្ងៃ", "numeric_price": 2.0},
-    10: {"price": "3.00", "label": "🛒 ទិញសេវាកម្ម: 10 ថ្ងៃ", "numeric_price": 3.0},
-    20: {"price": "5.00", "label": "🛒 ទិញសេវាកម្ម: 20 ថ្ងៃ", "numeric_price": 5.0},
-    30: {"price": "6.00", "label": "🛒 ទិញសេវាកម្ម: 30 ថ្ងៃ", "numeric_price": 6.0},
+    5: {"price": "2.00 ដុល្លារ", "label": "🛒 ទិញសេវាកម្ម: 5 ថ្ងៃ"},
+    10: {"price": "3.00 ដុល្លារ", "label": "🛒 ទិញសេវាកម្ម: 10 ថ្ងៃ"},
+    20: {"price": "5.00 ដុល្លារ", "label": "🛒 ទិញសេវាកម្ម: 20 ថ្ងៃ"},
+    30: {"price": "6.00 ដុល្លារ", "label": "🛒 ទិញសេវាកម្ម: 30 ថ្ងៃ"},
 }
 
 logging.basicConfig(
@@ -44,9 +42,6 @@ logging.basicConfig(
 logger = logging.getLogger("subscription_bot")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Initialize EasyOCR Reader (ພາសាអង់គ្លេស)
-ocr_reader = easyocr.Reader(['en'], gpu=False)
-
 user_selected_package = {}
 user_last_photo_time = {}
 
@@ -55,7 +50,7 @@ app_web = Flask(__name__)
 
 @app_web.route("/")
 def home():
-    return "Subscription Bot with OCR Protection is running!"
+    return "Subscription Bot is running smoothly!"
 
 def run_web():
     port = int(os.getenv("PORT", "10000"))
@@ -242,7 +237,7 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "1. ជ្រើសរើសកញ្ចប់សេវាកម្មដែលអ្នកចង់ទិញ។\n"
             "2. ស្កេន QR Code តាមតម្លៃកញ្ចប់នីមួយៗ។\n"
             "3. ផ្ញើរូបវិក្កយបត្រ (Receipt) មកកាន់ Bot នេះផ្ទាល់។\n"
-            "4. ប្រព័ន្ធនឹងពិនិត្យស្វ័យប្រវត្ត និងរង់ចាំ Approve។",
+            "4. រង់ចាំ Owner ពិនិត្យ និង Approve ជូនជាការស្រេច។",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ ត្រឡប់ទៅម៉ឺនុយដើម", callback_data="user_main_menu")]]),
         )
         return
@@ -263,7 +258,7 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = (
             "🧾 Payment\n\n"
             f"{PACKAGES[days]['label']}\n"
-            f"💵 តម្លៃ: ${PACKAGES[days]['price']} ដុល្លារ\n\n"
+            f"💵 តម្លៃ: ${PACKAGES[days]['price']}\n\n"
             "សូមស្កែន QR រួចផ្ញើប័ណ្ណមក Bot\n"
             f"លេខសំណើ៖ #{user_id}"
         )
@@ -279,7 +274,7 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(caption + "\n\n⚠️ មិនអាចបង្ហាញ QR Code បានទេ។")
 
 
-# ------------------------- Receipt flow (WITH OCR AUTO-VALIDATION) ----------------------
+# ------------------------- Receipt flow (Protected & Light) ----------------------
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user or not update.message or not update.message.photo:
@@ -289,47 +284,19 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ សូមជ្រើសរើសកញ្ចប់សេវាកម្មជាមុនសិន។", reply_markup=package_keyboard())
         return
 
+    current_time = asyncio.get_running_loop().time()
+    if not is_admin(user_id):
+        last = user_last_photo_time.get(user_id, 0)
+        if current_time - last < 10:
+            await update.message.reply_text("⚠️ សូមរង់ចាំ ១០ វិនាទី មុនពេលផ្ញើរូបម្ដងទៀត។")
+            return
+        user_last_photo_time[user_id] = current_time
+
     photo = update.message.photo[-1]
     file_id, unique_id = photo.file_id, photo.file_unique_id
     days = user_selected_package[user_id]
-    required_price = str(PACKAGES[days]["price"])
     username = user.username or user.first_name or "User"
 
-    # 📥 ទាញយករូបភាពមកធ្វើ OCR Scan
-    await update.message.reply_text("🔄 កំពុងពិនិត្យ និងស្កែនវិក្កយបត្ររបស់អ្នកដោយស្វ័យប្រវត្តិ...")
-    try:
-        photo_file = await photo.get_file()
-        photo_bytes = await photo_file.download_as_bytearray()
-        
-        # ប្រើ EasyOCR អានអក្សរក្នុងរូបភាព
-        ocr_results = ocr_reader.readtext(bytes(photo_bytes), detail=0)
-        scanned_text = " ".join(ocr_results).upper()
-        logger.info(f"OCR Scanned Text for user {user_id}: {scanned_text}")
-    except Exception:
-        logger.exception("OCR processing failed")
-        await update.message.reply_text("❌ មានបញ្ហាក្នុងការអានរូបភាពវិក្កយបត្ររបស់អ្នក។ សូមព្យាយាមផ្ញើរូបភាពច្បាស់ជាងមុន។")
-        return
-
-    # 🔍 ផ្ទៀងផ្ទាត់សុវត្ថិភាពស្វ័យប្រវត្ត (Auto-Validation)
-    # ១. ពិនិត្យឈ្មោះ និងលេខគណនី
-    name_matched = MERCHANT_NAME.upper() in scanned_text
-    acc_matched = (MERCHANT_USD_ACCOUNT in scanned_text) or (MERCHANT_KHR_ACCOUNT in scanned_text)
-
-    # ២. ពិនិត្យទឹកប្រាក់ (ត្រូវមានតម្លៃស្មើនឹងកញ្ចប់ដែលបានជ្រើសរើស)
-    price_matched = required_price in scanned_text
-
-    # ប្រសិនបើឈ្មោះ ឬលេខគណនី ឬទឹកប្រាក់មិនត្រូវ ❌ បដិសេធភ្លាមៗ (Auto Reject)
-    if not (name_matched or acc_matched) or not price_matched:
-        await update.message.reply_text(
-            "❌ **បដិសេធស្វ័យប្រវត្តិ (Auto-Reject)!**\n\n"
-            "ហេតុផលដែលអាចកើតមាន៖\n"
-            "• ឈ្មោះអ្នកទទួល ឬលេខគណនីក្នុងវិក្កយបត្រ **មិនមែនជាគណនីរបស់យើងទេ** (អាចជា ACLEDA ឬអ្នកដទៃ)។\n"
-            "• ចំនួនទឹកប្រាក់មិនត្រូវនឹងតម្លៃកញ្ចប់សេវាកម្ម ($" + required_price + ")។\n\n"
-            "សូមពិនិត្យមើលឡើងវិញ រួចផ្ញើវិក្កយបត្រដែលត្រឹមត្រូវ។"
-        )
-        return
-
-    # ប្រសិនបើត្រឹមត្រូវ រក្សាទុកក្នុង Database និងផ្ញើទៅ Admin
     conn = get_db_connection()
     if conn is None:
         await update.message.reply_text("❌ Database មានបញ្ហា។")
@@ -337,17 +304,24 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         with conn:
             with conn.cursor() as cur:
+                # ទប់ស្កាត់ការប្រើ Receipt サ้ำ (Replay Attack)
                 cur.execute("SELECT status FROM payment_requests WHERE photo_unique_id = %s", (unique_id,))
                 if cur.fetchone():
-                    await update.message.reply_text("❌ រូបវិក្កយបត្រនេះត្រូវបានប្រើប្រាស់រួចហើយ។")
+                    await update.message.reply_text("❌ រូបវិក្កយបត្រនេះត្រូវបានផ្ញើរួចហើយ ឬធ្លាប់បានប្រើប្រាស់រួច!")
                     return
+                
+                cur.execute("SELECT user_id FROM used_receipts WHERE photo_file_id = %s", (unique_id,))
+                if cur.fetchone():
+                    await update.message.reply_text("❌ វិក្កយបត្រនេះត្រូវបានប្រើប្រាស់រួចរាល់ហើយក្នុងប្រព័ន្ធ!")
+                    return
+
                 cur.execute("""
                     INSERT INTO payment_requests
                     (photo_unique_id, telegram_file_id, user_id, package_days, status, created_at)
                     VALUES (%s, %s, %s, %s, 'pending', %s)
                 """, (unique_id, file_id, user_id, days, get_now()))
     except Exception:
-        await update.message.reply_text("❌ មិនអាចរក្សាទុកទិន្នន័យបានទេ។")
+        await update.message.reply_text("❌ មិនអាចរក្សាទុកវិក្កយបត្របានទេ។")
         return
     finally:
         conn.close()
@@ -356,26 +330,50 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [
             InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user_id}_{days}_{unique_id}"),
             InlineKeyboardButton("❌ Reject", callback_data=f"reject_{user_id}_{unique_id}"),
-        ]
+        ],
+        [
+            InlineKeyboardButton("➕ បន្ថែម 5ថ្ងៃ", callback_data=f"ext_{user_id}_5"),
+            InlineKeyboardButton("➕ បន្ថែម 10ថ្ងៃ", callback_data=f"ext_{user_id}_10"),
+        ],
     ])
     try:
         await context.bot.send_photo(
             chat_id=ADMIN_ID, photo=file_id,
             caption=(
-                "✅ **ឆ្លងកាត់ OCR Auto-Check ជោគជ័យ!**\n\n"
+                "🔔 សំណើទូទាត់ថ្មី\n\n"
                 f"👤 ឈ្មោះ Telegram៖ {username}\n"
                 f"🆔 User ID៖ `{user_id}`\n"
-                f"📦 កញ្ចប់៖ {days} ថ្ងៃ (${required_price})\n"
-                f"🧾 Unique ID៖ `{unique_id}`"
+                f"📦 កញ្ចប់៖ {days} ថ្ងៃ (${PACKAGES[days]['price']})\n"
+                f"🧾 Receipt key៖ `{unique_id}`\n\n"
+                f"⚠️ **ការប្រុងប្រយ័ត្នสำหรับ Admin:** សូមពិនិត្យមើលឈ្មោះអ្នកទទួលឱ្យចំឈ្មោះ **{MERCHANT_NAME}** និងលេខគណនី (**{MERCHANT_USD_ACCOUNT}** / **{MERCHANT_KHR_ACCOUNT}**) ឱ្យបានត្រឹមត្រូវ មុននឹងចុច Approve ដើម្បីការពារការបន្លំយកវិក្កយបត្រធនាគារដទៃ (ឧ. ACLEDA ឬអ្នកដទៃ)!"
             ),
             reply_markup=keyboard,
         )
-        await update.message.reply_text("✅ វិក្កយបត្រត្រឹមត្រូវតាមប្រព័ន្ធ! សូមរង់ចាំ Admin អនុម័តបន្តិច។")
+        await update.message.reply_text(
+            "✅ Receipt បានទទួលរួចរាល់។\n\n"
+            "⏳ សូមរង់ចាំ Owner ត្រួតពិនិត្យ និង Approve...\n"
+            "📅 សេវាកម្ម (ចំនួនថ្ងៃ) នឹងចូលគណនីរបស់អ្នក បន្ទាប់ពី Approve រួច។"
+        )
     except TelegramError:
-        await update.message.reply_text("❌ មិនអាចបញ្ជូនទៅ Admin បានទេ។")
+        await update.message.reply_text("❌ មិនអាចផ្ញើវិក្កយបត្រទៅ Admin បានទេ។")
 
 
-# --------------------- Admin actions & other functions -----------------
+# ------------------ Secure private invite & Admin actions --------------------
+async def handle_chat_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    req = update.chat_join_request
+    if not req or req.chat.id != GROUP_CHAT_ID:
+        return
+    joining_user_id = req.from_user.id
+    invite_url = req.invite_link.invite_link if req.invite_link else None
+    if not invite_url:
+        return
+    try:
+        await context.bot.approve_chat_join_request(chat_id=GROUP_CHAT_ID, user_id=joining_user_id)
+        db_execute("UPDATE invite_links SET status = 'used' WHERE invite_link = %s", (invite_url,))
+    except Exception:
+        pass
+
+
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not is_admin(query.from_user.id):
@@ -398,7 +396,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             db_execute("INSERT INTO used_receipts (photo_file_id, user_id, used_at) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING", (unique_id, user_id, get_now()))
             db_execute("UPDATE payment_requests SET status = 'approved' WHERE photo_unique_id = %s", (unique_id,))
             
-            await context.bot.send_message(user_id, f"✅ Payment ត្រូវបាន Approve រួចរាល់! សេវាកម្មរបស់អ្នកមានសុពលភាពដល់៖ {expiry_date[:10]}")
+            await context.bot.send_message(user_id, f"✅ Payment ត្រូវបាន Approve រួចរាល់! សេវាកម្មមានសុពលភាពដល់៖ {expiry_date[:10]}")
             await query.edit_message_caption(caption=(query.message.caption or "") + "\n\n✅ បាន Approve ជោគជ័យ។")
         except Exception:
             await query.message.reply_text("❌ Approve បរាជ័យ។")
@@ -410,6 +408,17 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(user_id, "❌ វិក្កយបត្ររបស់អ្នកត្រូវបានបដិសេធដោយ Admin។")
             await query.edit_message_caption(caption=(query.message.caption or "") + "\n\n❌ បាន Reject។")
+        except Exception:
+            pass
+
+    elif data.startswith("ext_"):
+        parts = data.split("_")
+        user_id, days = int(parts[1]), int(parts[2])
+        expiry_date = fmt_dt(now_dt() + timedelta(days=days))
+        db_execute("UPDATE users SET expiry_date = %s WHERE user_id = %s", (expiry_date, user_id))
+        try:
+            await context.bot.send_message(user_id, f"✨ Admin បានបន្ថែមសេវាកម្មចំនួន {days} ថ្ងៃ។")
+            await query.edit_message_caption(caption=(query.message.caption or "") + f"\n\n➕ បានបន្ថែម {days} ថ្ងៃ។")
         except Exception:
             pass
 
@@ -440,7 +449,8 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("status", status))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    application.add_handler(CallbackQueryHandler(button_callback, pattern=r"^(approve_|reject_)"))
+    application.add_handler(ChatJoinRequestHandler(handle_chat_join_request))
+    application.add_handler(CallbackQueryHandler(button_callback, pattern=r"^(approve_|reject_|ext_)"))
     application.add_handler(CallbackQueryHandler(package_callback, pattern=r"^(pkg_|user_)"))
 
     application.run_polling()
