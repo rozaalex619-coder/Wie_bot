@@ -25,6 +25,11 @@ CAMBODIA_TZ = ZoneInfo("Asia/Phnom_Penh")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8980369344"))
 GROUP_CHAT_ID = int(os.getenv("GROUP_CHAT_ID", "-1004400009713"))
 
+# ⚙️ ព័ត៌មានគណនី ABA របស់ម្ចាស់បូត (សម្រាប់ផ្ទៀងផ្ទាត់សុវត្ថិភាព)
+MERCHANT_NAME = "ROZA YIN"
+MERCHANT_USD_ACCOUNT = "019 090 094"
+MERCHANT_KHR_ACCOUNT = "500 769 213"
+
 PACKAGES = {
     5: {"price": "2.00 ដុល្លារ", "label": "🛒 ទិញសេវាកម្ម: 5 ថ្ងៃ"},
     10: {"price": "3.00 ដុល្លារ", "label": "🛒 ទិញសេវាកម្ម: 10 ថ្ងៃ"},
@@ -337,7 +342,7 @@ async def package_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(caption + "\n\n⚠️ មិនអាចបង្ហាញ QR Code បានទេ។ សូមទាក់ទង Admin។")
 
 
-# ------------------------- Receipt flow (Secured) ----------------------
+# ------------------------- Receipt flow (Secured & Protected) ----------------------
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user or not update.message or not update.message.photo:
@@ -364,24 +369,21 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if conn is None:
         await update.message.reply_text("❌ Database មានបញ្ហា។ សូមសាកល្បងម្ដងទៀតពេលក្រោយ។")
         return
-    
     try:
         with conn:
             with conn.cursor() as cur:
-                # 1. ការពារការយក Receipt របស់ខ្លួនឯង ឬអ្នកដទៃមកផ្ញើซ้ำ (Reuse / Replay Attack)
-                cur.execute("SELECT user_id, status FROM payment_requests WHERE photo_unique_id = %s", (unique_id,))
-                existing_req = cur.fetchone()
-                if existing_req:
-                    await update.message.reply_text("❌ វិក្កយបត្រ (Receipt) នេះត្រូវបានប្រើប្រាស់រួចហើយ ឬមានក្នុងប្រព័ន្ធរួចហើយ!")
+                # 1. ទប់ស្កាត់ការយក Receipt មកប្រើซ้ำ (Replay Attack)
+                cur.execute("SELECT status FROM payment_requests WHERE photo_unique_id = %s", (unique_id,))
+                if cur.fetchone():
+                    await update.message.reply_text("❌ រូបវិក្កយបត្រនេះត្រូវបានផ្ញើរួចហើយ ឬធ្លាប់បានប្រើប្រាស់រួច!")
                     return
-
-                # 2. ការពារការយក Receipt ដែលធ្លាប់ត្រូវបាន Approve រួចហើយក្នុងตาราง used_receipts
+                
+                # 2. ទប់ស្កាត់មិនឱ្យយក Receipt ที่ធ្លាប់ Approve แล้วมาใช้ซ้ำ
                 cur.execute("SELECT user_id FROM used_receipts WHERE photo_file_id = %s", (unique_id,))
                 if cur.fetchone():
-                    await update.message.reply_text("❌ វិក្កយបត្រនេះធ្លាប់ត្រូវបានប្រើប្រាស់ដើម្បីទូទាត់រួចរាល់ហើយ!")
+                    await update.message.reply_text("❌ វិក្កយបត្រនេះត្រូវបានប្រើប្រាស់រួចរាល់ហើយក្នុងប្រព័ន្ធ!")
                     return
 
-                # 3. បញ្ចូលសំណើថ្មីទៅក្នុង Database
                 cur.execute("""
                     INSERT INTO payment_requests
                     (photo_unique_id, telegram_file_id, user_id, package_days, status, created_at)
@@ -394,7 +396,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         conn.close()
 
-    # បន្ថែមការរំលឹកសុវត្ថិភាពដល់ Admin ឱ្យឆែកមើលឈ្មោះ ឬ To Account ឱ្យបានច្បាស់លាស់
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user_id}_{days}_{unique_id}"),
@@ -413,8 +414,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"👤 ឈ្មោះ Telegram៖ {username}\n"
                 f"🆔 Telegram User ID៖ `{user_id}`\n"
                 f"📦 កញ្ចប់ទិញ៖ {days} ថ្ងៃ (${PACKAGES[days]['price']})\n"
-                f"🧾 Receipt Unique ID៖ `{unique_id}`\n\n"
-                "⚠️ **ចំណាំសម្រាប់ Admin:** សូមពិនិត្យមើលឈ្មោះអ្នកផ្ញើ និងលេខគណនីអ្នកទទួល (To Account) ក្នុងវិក្កយបត្រឱ្យបានត្រឹមត្រូវ មុននឹងចុច Approve!"
+                f"🧾 Receipt key៖ `{unique_id}`\n\n"
+                f"⚠️ **ចំណាំសម្រាប់ Admin:** សូមពិនិត្យមើលឈ្មោះអ្នកទទួលឱ្យចំឈ្មោះ **{MERCHANT_NAME}** និងលេខគណនី (**{MERCHANT_USD_ACCOUNT}** / **{MERCHANT_KHR_ACCOUNT}**) ឱ្យបានត្រឹមត្រូវ មុននឹងចុច Approve ដើម្បីការពារការបន្លំយកវិក្កយបត្រធនាគារដទៃ (ឧ. ACLEDA ឬអ្នកដទៃ)!"
             ),
             reply_markup=keyboard,
         )
@@ -618,7 +619,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             with conn:
                 with conn.cursor() as cur:
-                    # ตรวจสอบซ้ำอีกครั้งเพื่อความปลอดภัยสูงสุด ป้องกันการกด Approve ซ้ำ
+                    # ตรวจสอบซ้ำเพื่อป้องกันการ Approve ซ้ำซ้อน
                     cur.execute("SELECT user_id FROM used_receipts WHERE photo_file_id = %s", (unique_id,))
                     if cur.fetchone():
                         raise ValueError("Receipt already used")
@@ -654,7 +655,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             warned = 0, package_info = EXCLUDED.package_info
                     """, (user_id, str(user_id), expiry_text, f"{days} ថ្ងៃ"))
                     
-                    # บันทึกว่า Receipt Unique ID นี้ถูกใช้แล้ว ห้ามนำมาใช้อีกเด็ดขาด
+                    # บันทึก Receipt Unique ID ว่าถูกใช้งานแล้ว ห้ามนำกลับมาใช้อีก
                     cur.execute("""
                         INSERT INTO used_receipts (photo_file_id, user_id, used_at)
                         VALUES (%s, %s, %s) ON CONFLICT (photo_file_id) DO NOTHING
@@ -687,7 +688,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.revoke_chat_invite_link(GROUP_CHAT_ID, invite.invite_link)
             except TelegramError:
                 pass
-            await query.message.reply_text("❌ ការអនុម័តបរាជ័យ។")
+            await query.message.reply_text("❌ ការអនុម័តបរាជ័យ។ សូមពិនិត្យ Database Log មុនសាកល្បងម្ដងទៀត។")
             return
         finally:
             conn.close()
@@ -704,7 +705,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"💎 បានបញ្ចូល: `{days} ថ្ងៃ`\n\n"
                     f"📅 ថ្ងៃចាប់ផ្តើម: `{start_date_text[:10]}`\n"
                     f"⏰ ថ្ងៃផុតកំណត់: `{expiry_text[:10]}`\n\n"
-                    "✨ សេវាកម្មរបស់អ្នកបានចូលគណនីរួចរាល់។\n\n"
+                    "✨ សេវាកម្មរបស់អ្នកបានចូលគណនីរួចរាល់។\n"
+                    "សូមចូល Web ហើយប្រើប្រាស់បានស្ដាយៗ។\n\n"
                     f"🔗 Link ចូលគ្រុប (២៤ម៉ោង): {invite.invite_link}"
                 ),
             )
@@ -1089,7 +1091,7 @@ def main():
     application.add_handler(CommandHandler("admin", admin_panel_command))
     application.add_handler(CommandHandler("broadcast", broadcast_command))
     application.add_handler(CommandHandler("adddays", adddays_command))
-    application.add_handler, (CommandHandler("kickuser", kickuser_command))
+    application.add_handler(CommandHandler("kickuser", kickuser_command))
     application.add_handler(CommandHandler("setqr", setqr_command))
     application.add_handler(CommandHandler("export", export_command))
 
